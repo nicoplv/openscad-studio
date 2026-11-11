@@ -3,6 +3,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { z } from 'zod';
 import { eventBus, historyService } from '../platform';
+import openScadDocs from './openscadDocs.json';
 import { getRenderService, type RenderOptions } from './renderService';
 import type { PreviewSceneStyle } from './previewSceneConfig';
 import type { AiProvider } from '../stores/apiKeyStore';
@@ -57,20 +58,10 @@ You are an expert OpenSCAD assistant helping users design and modify 3D models. 
 - **Switch render target**: Use \`set_render_target\` to change which file is compiled and previewed
 - **Update preview**: Use \`trigger_render\` to manually refresh the preview
 
-### Critical Rules for Editing:
-1. **ALWAYS use exact string replacement**: Never output full file replacements. Use \`apply_edit\` with exact substrings.
-2. **Provide exact substrings**: The \`old_string\` must match exactly (including whitespace and indentation) and must be unique in the file.
-3. **Keep changes focused**: Each edit should change one logical unit. Break unrelated changes into separate steps.
-4. **Always validate when done**: After finishing all edits, always call \`get_diagnostics\` to confirm the code compiles cleanly. Fix any errors before declaring success.
-5. **Include context**: Make the \`old_string\` large enough to be unique - include surrounding lines if needed.
-
-### Recommended Workflow:
-1. Start by calling \`get_project_context\` to understand what exists (render target + code + file listing)
-2. Optionally use \`get_preview_screenshot\` to see the rendered output
-3. For fixes, use \`get_diagnostics\` to see what errors exist
-4. Use \`apply_edit\` with the exact old text and new replacement
-5. The preview updates automatically after successful edits
-6. After all edits are complete, call \`get_diagnostics\` to verify the code compiles without new errors. If there are errors, fix them with additional \`apply_edit\` calls.
+### Editing Workflow:
+1. Start with \`get_project_context\`. Inspect the preview if helpful and check existing diagnostics when fixing an error.
+2. Use \`apply_edit\` for focused replacements. The \`old_string\` must match exactly, including whitespace, and appear only once. Add surrounding lines as needed. Never output full file replacements.
+3. The preview updates automatically after edits. Always call \`get_diagnostics\` after the final edit. Fix any compilation errors before declaring success.
 
 ### Multi-File Projects:
 - The **render target** is the file that gets compiled and previewed. Other files are available via \`include\`/\`use\`.
@@ -89,43 +80,8 @@ You are an expert OpenSCAD assistant helping users design and modify 3D models. 
 - Comments capture the rendered file, unit label, and source hash when available at placement time. They refer to that preview; if the source has since changed, inspect it before assuming the same geometry still exists there. A point is a location hint, not a face ID or a guaranteed mapping to a source expression.
 
 ### OpenSCAD Quick Reference:
-
-**3D Primitives:**
-- \`cube([x, y, z]);\` or \`cube(size);\`
-- \`sphere(r);\` or \`sphere(d);\`
-- \`cylinder(h, r1, r2);\` or \`cylinder(h, d1, d2);\`
-
-**2D Primitives:**
-- \`circle(r);\` or \`circle(d);\`
-- \`square([x, y]);\` or \`square(size);\`
-- \`polygon(points);\`
-
-**Transformations:**
-- \`translate([x, y, z]) { ... }\`
-- \`rotate([rx, ry, rz]) { ... }\`
-- \`scale([sx, sy, sz]) { ... }\`
-- \`mirror([x, y, z]) { ... }\`
-
-**Boolean Operations:**
-- \`union() { ... }\` - combines objects (default)
-- \`difference() { ... }\` - subtracts subsequent objects from first
-- \`intersection() { ... }\` - keeps only overlapping parts
-
-**2D to 3D:**
-- \`linear_extrude(height) { ... }\`
-- \`rotate_extrude(angle) { ... }\`
-
-**Modifiers:**
-- \`#\` - debug (show in transparent red)
-- \`%\` - background (show transparently)
-- \`*\` - disable (don't render)
-- \`!\` - show only this
-
-**Control Structures:**
-- \`for (i = [start:end]) { ... }\`
-- \`if (condition) { ... }\`
-- Variables: \`x = 10;\`
-- Functions: \`function name(params) = expression;\`
+- \`cube([x, y, z]);\`, \`cylinder(h = height, d = diameter);\`, \`translate([x, y, z]) child;\`, \`difference() { base; cutters; }\`.
+- Use \`lookup_openscad_docs\` when unsure about syntax, arguments, language behavior, or version support.
 
 ### Customizer-Friendly Output:
 - When creating or refactoring a design for end-user customization, expose user-facing parameters as top-level literal assignments before modules/functions.
@@ -242,6 +198,58 @@ export function buildTools(callbacks: AiToolCallbacks) {
           return `❌ File not found: ${path}\n\nAvailable files:\n${available.map((p) => `  ${p}`).join('\n')}`;
         }
         return content;
+      },
+    }),
+
+    lookup_openscad_docs: tool({
+      description:
+        'Look up built-in OpenSCAD syntax, arguments, examples, and version notes in the bundled reference.',
+      inputSchema: z.object({
+        query: z
+          .string()
+          .describe('An OpenSCAD symbol or short topic, e.g. linear_extrude or twist'),
+      }),
+      execute: async ({ query }) => {
+        const normalizedQuery = query
+          .trim()
+          .toLowerCase()
+          .replace(/\(\s*\)$/, '')
+          .trimEnd();
+        const exactMatch = openScadDocs.find(
+          ({ name, aliases }) =>
+            name.toLowerCase() === normalizedQuery ||
+            aliases?.some((alias) => alias.toLowerCase() === normalizedQuery)
+        );
+
+        const wordPattern = /[a-z0-9_$]+/g;
+        const queryWords = [...new Set(normalizedQuery.match(wordPattern))];
+        const matches = exactMatch
+          ? [exactMatch]
+          : openScadDocs
+              .map((entry) => {
+                const searchText = [entry.name, ...(entry.aliases ?? []), ...entry.keywords]
+                  .join(' ')
+                  .toLowerCase();
+                const words = new Set(searchText.match(wordPattern));
+                const score = queryWords.filter((word) => words.has(word)).length;
+                return { entry, score };
+              })
+              .filter(({ score }) => score > 0)
+              .sort((a, b) => b.score - a.score || a.entry.name.localeCompare(b.entry.name, 'en'))
+              .slice(0, 3)
+              .map(({ entry }) => entry);
+
+        if (matches.length === 0) {
+          return 'No matching OpenSCAD documentation. Try a built-in name such as linear_extrude or a short topic such as twist.';
+        }
+
+        return matches
+          .map(({ name, signature, description, example, source, version }) =>
+            [name, signature, description, version, 'Example', example, `Source: ${source}`]
+              .filter(Boolean)
+              .join('\n')
+          )
+          .join('\n\n');
       },
     }),
 

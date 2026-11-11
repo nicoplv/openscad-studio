@@ -275,6 +275,62 @@ describe('buildTools', () => {
     });
   });
 
+  describe('lookup_openscad_docs', () => {
+    async function lookup(query: string): Promise<string> {
+      const tools = buildTools(createCallbacks()) as Record<string, ExecutableTool>;
+      return (await tools.lookup_openscad_docs.execute({ query })) as string;
+    }
+
+    it('returns only the exact symbol with its signature, example, and source', async () => {
+      const result = await lookup('  LINEAR_EXTRUDE()  ');
+
+      expect(result.split('\n\n')).toHaveLength(1);
+      expect(result).toMatch(/^linear_extrude\nlinear_extrude\(height = h,/);
+      expect(result).toContain('Example\nlinear_extrude(height = 24, twist = 55');
+      expect(result).toContain(
+        'https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/2D_to_3D_Extrusion'
+      );
+    });
+
+    it('resolves special-variable aliases', async () => {
+      const result = await lookup('$fn');
+
+      expect(result.split('\n\n')).toHaveLength(1);
+      expect(result).toMatch(/^Tessellation settings\n\$fn = count/);
+    });
+
+    it('includes a version note when the entry has one', async () => {
+      expect(await lookup('rotate_extrude')).toContain(
+        'The angle parameter requires OpenSCAD 2019.05 or later.'
+      );
+    });
+
+    it('ranks a topic query by the number of matching words', async () => {
+      const result = await lookup('twist a 2D profile');
+
+      expect(
+        result
+          .split('\n\n')
+          .slice(0, 2)
+          .map((entry) => entry.split('\n')[0])
+      ).toEqual(['linear_extrude', 'rotate_extrude']);
+    });
+
+    it('breaks ties alphabetically and returns at most three entries', async () => {
+      const result = await lookup('2D primitive');
+
+      expect(result.split('\n\n').map((entry) => entry.split('\n')[0])).toEqual([
+        'circle',
+        'polygon',
+        'square',
+      ]);
+    });
+
+    it.each(['  ', 'unrecognized_symbol'])('gives a retry hint for %j', async (query) => {
+      expect(await lookup(query)).toMatch(/^No matching OpenSCAD documentation\. Try/);
+    });
+  });
+
   describe('apply_edit', () => {
     it('edits non-render-target file via editProjectFile', async () => {
       const editProjectFile = jest.fn(() => null);

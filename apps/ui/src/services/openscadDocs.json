@@ -1,0 +1,200 @@
+[
+  {
+    "name": "cube",
+    "keywords": ["3D primitive", "box", "cuboid", "rectangle", "center"],
+    "signature": "cube(size, center = false);",
+    "description": "Pass one length for all axes or [x, y, z] for independent dimensions. Centering places the origin at the middle of the box.",
+    "example": "cube([30, 18, 4], center = true);",
+    "source": "https://openscad.org/cheatsheet/index.html"
+  },
+  {
+    "name": "sphere",
+    "keywords": ["3D primitive", "ball", "radius", "diameter"],
+    "signature": "sphere(r); or sphere(d = diameter);",
+    "description": "Creates a sphere centered at the origin. Choose a radius or a named diameter.",
+    "example": "sphere(d = 16);",
+    "source": "https://openscad.org/cheatsheet/index.html"
+  },
+  {
+    "name": "cylinder",
+    "keywords": ["3D primitive", "cone", "taper", "height", "radius", "diameter"],
+    "signature": "cylinder(h, r, center = false); or cylinder(h, r1, r2, center = false);",
+    "description": "Creates a solid along Z. Set r1 and r2 for distinct bottom and top radii, or use named d, d1, and d2 for diameters.",
+    "example": "cylinder(h = 14, d1 = 18, d2 = 10);",
+    "source": "https://openscad.org/cheatsheet/index.html"
+  },
+  {
+    "name": "square",
+    "keywords": ["2D primitive", "rectangle", "width", "center"],
+    "signature": "square(size, center = false);",
+    "description": "Creates a filled shape in XY. Use a single side length or a vector [width, height].",
+    "example": "square([24, 12], center = true);",
+    "source": "https://openscad.org/cheatsheet/index.html"
+  },
+  {
+    "name": "circle",
+    "keywords": ["2D primitive", "disc", "radius", "diameter"],
+    "signature": "circle(r); or circle(d = diameter);",
+    "description": "Creates a filled circle centered at the origin in XY. Choose a radius or a named diameter.",
+    "example": "circle(d = 12);",
+    "source": "https://openscad.org/cheatsheet/index.html"
+  },
+  {
+    "name": "polygon",
+    "keywords": ["2D primitive", "outline", "vertices", "paths", "holes"],
+    "signature": "polygon(points, paths, convexity);",
+    "description": "Fills an outline defined by XY points. Optional paths list point indices for the outer boundary and any holes.",
+    "example": "polygon(points = [[0, 0], [22, 0], [8, 13]]);",
+    "source": "https://openscad.org/cheatsheet/index.html"
+  },
+  {
+    "name": "text",
+    "keywords": ["2D primitive", "font", "letters", "engraving", "label", "alignment"],
+    "signature": "text(text, size, font, halign, valign, spacing, direction, language, script);",
+    "description": "Creates 2D glyph outlines. Extrude the result to produce solid lettering. Font availability depends on the renderer.",
+    "example": "text(\"LID\", size = 6, halign = \"center\");",
+    "version": "OpenSCAD 2015.03 or later.",
+    "source": "https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/Text"
+  },
+  {
+    "name": "translate",
+    "keywords": ["move", "position", "shift", "transform"],
+    "signature": "translate([x, y, z]) child;",
+    "description": "Moves its children by the given offsets in model coordinates.",
+    "example": "translate([14, 0, 2]) cube([8, 6, 3]);",
+    "source": "https://openscad.org/cheatsheet/index.html"
+  },
+  {
+    "name": "rotate",
+    "keywords": ["orientation", "angle", "degrees", "axis", "transform"],
+    "signature": "rotate([x, y, z]) child; or rotate(a = angle, v = axis) child;",
+    "description": "Rotates about the origin. With a vector of angles, rotations apply about X, Y, then Z. Angles are in degrees.",
+    "example": "rotate([0, 0, 30]) cube([18, 7, 4]);",
+    "source": "https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/Transformations#rotate"
+  },
+  {
+    "name": "scale",
+    "keywords": ["stretch", "resize", "factor", "transform"],
+    "signature": "scale([x, y, z]) child;",
+    "description": "Multiplies coordinates by per-axis factors about the origin. A single factor applies uniformly.",
+    "example": "scale([2, 1, 0.5]) sphere(r = 5);",
+    "source": "https://openscad.org/cheatsheet/index.html"
+  },
+  {
+    "name": "mirror",
+    "keywords": ["reflect", "symmetry", "normal", "plane", "transform"],
+    "signature": "mirror([x, y, z]) child;",
+    "description": "Reflects its children through the plane passing through the origin with the given normal.",
+    "example": "mirror([1, 0, 0]) translate([7, 0, 0]) cube(3);",
+    "source": "https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/Transformations#mirror"
+  },
+  {
+    "name": "union",
+    "keywords": ["boolean", "combine", "join", "merge", "add"],
+    "signature": "union() { children }",
+    "description": "Combines its children into a single result. Separate components can remain when their geometry does not touch.",
+    "example": "union() { cube([14, 8, 4]); translate([10, 0, 0]) cube([8, 8, 7]); }",
+    "source": "https://openscad.org/cheatsheet/index.html"
+  },
+  {
+    "name": "difference",
+    "keywords": ["boolean", "subtract", "cut", "hole", "remove"],
+    "signature": "difference() { base; cutters; }",
+    "description": "Subtracts every later child from the first child. Extend through-cutters slightly beyond both faces to avoid coincident surfaces.",
+    "example": "difference() { cube([20, 16, 4]); translate([10, 8, -1]) cylinder(h = 6, d = 5); }",
+    "source": "https://openscad.org/cheatsheet/index.html"
+  },
+  {
+    "name": "intersection",
+    "keywords": ["boolean", "overlap", "clip", "common", "crop"],
+    "signature": "intersection() { children }",
+    "description": "Keeps the region shared by all children. A child with no common overlap makes the result empty.",
+    "example": "intersection() { sphere(r = 9); cube([12, 12, 12], center = true); }",
+    "source": "https://openscad.org/cheatsheet/index.html"
+  },
+  {
+    "name": "linear_extrude",
+    "keywords": ["2D profile", "3D extrusion", "height", "twist", "slices", "taper"],
+    "signature": "linear_extrude(height = h, center = false, twist = degrees, slices = n, scale = factor) child;",
+    "description": "Extends a 2D profile into a solid along Z by default. Use twist in degrees and slices to control the height subdivisions.",
+    "example": "linear_extrude(height = 24, twist = 55, slices = 36) square([12, 8], center = true);",
+    "source": "https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/2D_to_3D_Extrusion"
+  },
+  {
+    "name": "rotate_extrude",
+    "keywords": ["2D profile", "3D extrusion", "revolve", "lathe", "sweep", "angle"],
+    "signature": "rotate_extrude(angle = 360, convexity = 2) child;",
+    "description": "Sweeps a 2D profile about Z. Keep the profile to one side of X = 0. The distance from that line becomes the sweep radius.",
+    "example": "rotate_extrude(angle = 270) translate([14, 0]) circle(r = 2);",
+    "version": "The angle parameter requires OpenSCAD 2019.05 or later.",
+    "source": "https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/2D_to_3D_Extrusion"
+  },
+  {
+    "name": "offset",
+    "keywords": ["2D outline", "expand", "shrink", "radius", "delta", "chamfer", "kerf"],
+    "signature": "offset(r = radius) child; or offset(delta = distance, chamfer = false) child;",
+    "description": "Expands a 2D outline for positive values and shrinks it for negative ones. Use r for rounded expansion or delta for fixed-distance edges.",
+    "example": "offset(r = 2) square([16, 10]);",
+    "version": "OpenSCAD 2015.03 or later.",
+    "source": "https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/Transformations#offset"
+  },
+  {
+    "name": "projection",
+    "keywords": ["2D", "3D", "flatten", "slice", "cross section", "shadow", "DXF", "SVG"],
+    "signature": "projection(cut = false) child;",
+    "description": "Projects 3D children onto XY. Set cut = true for the cross-section at Z = 0.",
+    "example": "projection(cut = true) sphere(r = 8);",
+    "source": "https://openscad.org/cheatsheet/index.html"
+  },
+  {
+    "name": "hull",
+    "keywords": ["convex", "envelope", "bridge", "rounded slot"],
+    "signature": "hull() { children }",
+    "description": "Builds the convex envelope around its children. Use two circles to construct a capsule-shaped profile.",
+    "example": "hull() { circle(r = 3); translate([18, 0]) circle(r = 3); }",
+    "source": "https://openscad.org/cheatsheet/index.html"
+  },
+  {
+    "name": "minkowski",
+    "keywords": ["sum", "round", "fillet", "expand", "smooth"],
+    "signature": "minkowski() { children }",
+    "description": "Computes the geometric sum of its children. A sphere rounds a solid while increasing its outer dimensions by the sphere diameter.",
+    "example": "minkowski() { cube([12, 8, 4]); sphere(r = 1, $fn = 24); }",
+    "source": "https://openscad.org/cheatsheet/index.html"
+  },
+  {
+    "name": "include",
+    "keywords": ["import", "library", "file", "dependency", "variables", "shared constants"],
+    "signature": "include <filename.scad>",
+    "description": "Includes source at the directive, making its definitions and variables available and evaluating top-level geometry.",
+    "example": "// dimensions.scad: width = 12;\n// main.scad\ninclude <dimensions.scad>\ncube(width);",
+    "source": "https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/Include_Statement"
+  },
+  {
+    "name": "use",
+    "keywords": ["import", "library", "file", "dependency", "module", "function"],
+    "signature": "use <filename.scad>",
+    "description": "Makes the referenced modules and functions callable. The caller gains neither the file's variables nor its top-level geometry.",
+    "example": "// parts.scad: module spacer() { cylinder(h = 4, d = 10); }\n// main.scad\nuse <parts.scad>\nspacer();",
+    "source": "https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/Include_Statement"
+  },
+  {
+    "name": "Tessellation settings",
+    "aliases": ["$fn", "$fa", "$fs"],
+    "keywords": ["facets", "resolution", "segments", "smooth", "fragments"],
+    "signature": "$fn = count; $fa = min_angle; $fs = min_size;",
+    "description": "Set $fn to a fragment count of at least 3 for a full circle. With $fn = 0, $fa and $fs guide angular and size-based resolution.",
+    "example": "cylinder(h = 6, d = 14, $fn = 48);",
+    "source": "https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/Other_Language_Features"
+  },
+  {
+    "name": "Customizer annotations",
+    "aliases": ["Customizer"],
+    "keywords": ["parameter", "slider", "range", "dropdown", "options", "group"],
+    "signature": "/* [Group] */ followed by a top-level literal assignment and // [min:step:max]",
+    "description": "Place editable literal parameters before modules and functions. Group them with a block comment and add slider ranges or choices with line comments.",
+    "example": "/* [Size] */\nwidth = 28; // [16:2:48]\ncube([width, 12, 4]);",
+    "version": "The upstream OpenSCAD Customizer requires 2019.05 or later.",
+    "source": "https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/Customizer"
+  }
+]

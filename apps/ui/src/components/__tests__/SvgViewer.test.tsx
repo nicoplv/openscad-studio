@@ -3,6 +3,7 @@
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { jest } from '@jest/globals';
 import { ThemeProvider } from '../../contexts/ThemeContext';
+import { TooltipProvider } from '../ui/Tooltip';
 
 const mockTrack = jest.fn();
 
@@ -77,8 +78,14 @@ const emptySvg = `
 function renderViewer(src = 'blob:ready') {
   return render(
     <ThemeProvider>
-      <SvgViewer src={src} />
-    </ThemeProvider>
+      <SvgViewer
+        src={src}
+        hasCurrentModelApiKey={true}
+        canAttachToAi={true}
+        onAttachToAi={async () => ({ status: 'attached' })}
+      />
+    </ThemeProvider>,
+    { wrapper: TooltipProvider }
   );
 }
 
@@ -164,6 +171,64 @@ describe('SvgViewer', () => {
     expect(renderedSvg?.querySelector('rect')?.getAttribute('vector-effect')).toBe(
       'non-scaling-stroke'
     );
+  });
+
+  it('attaches a drawing-plane comment after navigation without treating a drag or typing as a new tool action', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'image/svg+xml' },
+      text: async () => offOriginSvg,
+    });
+    const onAttachComment = jest.fn(async () => ({ status: 'attached' as const }));
+    render(
+      <TooltipProvider>
+        <ThemeProvider>
+          <SvgViewer
+            src="blob:comments"
+            hasCurrentModelApiKey={true}
+            canAttachToAi={true}
+            onAttachToAi={async () => ({ status: 'attached' })}
+            commentContext={{ renderTargetPath: 'render-target.scad', sourceHash: 'render-hash' }}
+            onAttachComment={onAttachComment}
+          />
+        </ThemeProvider>
+      </TooltipProvider>
+    );
+    const scene = await screen.findByTestId('preview-2d-scene');
+    const container = screen.getByTestId('preview-2d-container');
+    container.setPointerCapture = jest.fn();
+    container.releasePointerCapture = jest.fn();
+    fireEvent.click(screen.getByTestId('preview-2d-tool-comment'));
+    fireEvent.pointerDown(scene, { clientX: 200, clientY: 150, pointerId: 1 });
+    fireEvent.pointerMove(scene, { clientX: 220, clientY: 150, pointerId: 1 });
+    fireEvent.pointerUp(scene, { clientX: 220, clientY: 150, pointerId: 1 });
+    fireEvent.click(scene, { clientX: 220, clientY: 150 });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(scene, { clientX: 220, clientY: 150 });
+    const field = screen.getByRole('textbox');
+    fireEvent.change(field, { target: { value: 'Make this hole bigger' } });
+    fireEvent.keyDown(field, { key: 'a' });
+    expect(screen.queryByTestId('viewer-annotation-overlay')).toBeNull();
+    fireEvent.keyDown(field, { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(onAttachComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Make this hole bigger',
+        viewerKind: '2d',
+        position: { x: 0, y: -0, z: 0 },
+        renderTargetPath: 'render-target.scad',
+        sourceHash: 'render-hash',
+      })
+    );
+    expect(mockTrack).toHaveBeenCalledWith(
+      'viewer tool selected',
+      expect.objectContaining({ tool: 'comment', viewer_kind: '2d' })
+    );
+    expect(screen.queryByTestId('viewer-comment-pin')).toBeNull();
+    fireEvent.click(scene, { clientX: 220, clientY: 150 });
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('maps the default OpenSCAD 2D fill to the preview theme model color', async () => {

@@ -12,6 +12,7 @@ import { TbPaperclip, TbX } from 'react-icons/tb';
 import { Button, IconButton } from './ui';
 import type { ModelSelectionSurface } from '../analytics/runtime';
 import type { AiDraft, AttachmentStore } from '../types/aiChat';
+import { CommentCard } from './viewer-comment/CommentCard';
 
 interface AiComposerProps {
   draft: AiDraft;
@@ -33,6 +34,7 @@ interface AiComposerProps {
   onTextChange: (text: string) => void;
   onFilesSelected: (files: File[], sourceSurface?: ModelSelectionSurface) => void;
   onRemoveAttachment: (attachmentId: string, sourceSurface?: ModelSelectionSurface) => void;
+  onRemoveComment?: (commentId: string) => void;
   onSubmit: () => void;
   onCancel?: () => void;
 }
@@ -71,6 +73,7 @@ export const AiComposer = forwardRef<AiComposerRef, AiComposerProps>(
       onTextChange,
       onFilesSelected,
       onRemoveAttachment,
+      onRemoveComment,
       onSubmit,
       onCancel,
     },
@@ -320,6 +323,20 @@ export const AiComposer = forwardRef<AiComposerRef, AiComposerProps>(
               ))}
             </div>
           )}
+
+          {(draft.comments?.length ?? 0) > 0 ? (
+            <div className="mt-2 grid gap-2">
+              {draft.comments?.map((comment) => (
+                <CommentCard
+                  key={comment.id}
+                  comment={comment}
+                  onRemove={
+                    !disabled && onRemoveComment ? () => onRemoveComment(comment.id) : undefined
+                  }
+                />
+              ))}
+            </div>
+          ) : null}
 
           {(errors.length > 0 || blockedMessage || warningMessage || isDragActive) && (
             <div className={variant === 'welcome' ? 'mt-3 space-y-1' : 'mt-1.5 space-y-1'}>

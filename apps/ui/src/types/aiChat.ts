@@ -1,8 +1,14 @@
 import type { ModelSelectionSurface } from '../analytics/runtime';
+import type { MeasurementUnit } from '../stores/settingsStore';
 
 export type VisionSupport = 'yes' | 'no' | 'unknown';
 export type AssistantMessageState = 'complete' | 'cancelled' | 'error';
 export type ToolCallState = 'pending' | 'completed' | 'error' | 'denied';
+
+export interface AiContextUsage {
+  inputTokens: number;
+  contextLimit?: number;
+}
 
 export interface ToolCall {
   toolCallId: string;
@@ -32,7 +38,24 @@ export interface UserImagePart {
   height: number;
 }
 
-export type UserMessagePart = UserTextPart | UserImagePart;
+export interface ViewerComment {
+  id: string;
+  text: string;
+  position: { x: number; y: number; z: number };
+  viewerKind: '2d' | '3d';
+  measurementUnit: MeasurementUnit;
+  renderTargetPath: string;
+  sourceHash?: string;
+}
+
+export type ViewerCommentContext = Pick<ViewerComment, 'renderTargetPath' | 'sourceHash'>;
+
+export interface UserCommentPart {
+  type: 'comment';
+  comment: ViewerComment;
+}
+
+export type UserMessagePart = UserTextPart | UserImagePart | UserCommentPart;
 
 export interface UserMessage extends BaseMessage {
   type: 'user';
@@ -69,6 +92,7 @@ export interface Conversation {
 export interface AiDraft {
   text: string;
   attachmentIds: string[];
+  comments?: ViewerComment[];
 }
 
 export type AttachmentStatus = 'pending' | 'ready' | 'error';

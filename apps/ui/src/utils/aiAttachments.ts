@@ -1,6 +1,7 @@
 import type { ModelSelectionSurface } from '../analytics/runtime';
 import type { AiDraft, AttachmentRecord, AttachmentStore } from '../types/aiChat';
 import { createRandomId } from './randomId';
+import { getScaledDimensions, imageHasTransparency, JPEG_QUALITY } from './imageData';
 
 export const MAX_ATTACHMENTS_PER_MESSAGE = 4;
 export const MAX_SOURCE_FILE_BYTES = 8 * 1024 * 1024;
@@ -8,7 +9,6 @@ export const MAX_NORMALIZED_IMAGE_BYTES = 1.5 * 1024 * 1024;
 export const MAX_TOTAL_NORMALIZED_BYTES = 4 * 1024 * 1024;
 export const MAX_IMAGE_EDGE = 1600;
 const PREVIEW_EDGE = 256;
-const JPEG_QUALITY = 0.82;
 const PREVIEW_JPEG_QUALITY = 0.72;
 
 const ALLOWED_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
@@ -53,7 +53,11 @@ export function getDraftHasPendingAttachments(
 }
 
 export function getDraftCanSubmit(draft: AiDraft, attachments: AttachmentStore): boolean {
-  return draft.text.trim().length > 0 || getReadyAttachmentIds(draft, attachments).length > 0;
+  return (
+    draft.text.trim().length > 0 ||
+    getReadyAttachmentIds(draft, attachments).length > 0 ||
+    (draft.comments?.length ?? 0) > 0
+  );
 }
 
 export function getDraftNormalizedSizeBytes(draft: AiDraft, attachments: AttachmentStore): number {
@@ -229,29 +233,6 @@ async function normalizeImageFile(
   } finally {
     bitmap.close();
   }
-}
-
-function getScaledDimensions(width: number, height: number, maxEdge: number) {
-  const longestEdge = Math.max(width, height);
-  if (longestEdge <= maxEdge) {
-    return { width, height };
-  }
-
-  const scale = maxEdge / longestEdge;
-  return {
-    width: Math.max(1, Math.round(width * scale)),
-    height: Math.max(1, Math.round(height * scale)),
-  };
-}
-
-function imageHasTransparency(ctx: CanvasRenderingContext2D, width: number, height: number) {
-  const { data } = ctx.getImageData(0, 0, width, height);
-  for (let i = 3; i < data.length; i += 4) {
-    if (data[i] < 255) {
-      return true;
-    }
-  }
-  return false;
 }
 
 async function createPreviewBlob(canvas: HTMLCanvasElement, hasAlpha: boolean): Promise<Blob> {

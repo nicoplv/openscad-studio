@@ -50,6 +50,62 @@ describe('aiMessages', () => {
     ]);
   });
 
+  it('serializes comment objects as labeled JSON text alongside ordinary text and images', () => {
+    const comment = {
+      id: 'c1',
+      text: 'Make the hole bigger',
+      position: { x: 12.3456789, y: -20, z: 5 },
+      viewerKind: '3d' as const,
+      measurementUnit: 'mm' as const,
+      renderTargetPath: 'main.scad',
+      sourceHash: 'hash-1',
+    };
+    const messages: Message[] = [
+      {
+        id: 'u1',
+        timestamp: 1,
+        type: 'user',
+        parts: [
+          { type: 'text', text: 'Keep the other holes.' },
+          { type: 'comment', comment },
+          {
+            type: 'image',
+            attachmentId: 'i1',
+            filename: 'image.png',
+            mimeType: 'image/png',
+            width: 1,
+            height: 1,
+          },
+        ],
+      },
+    ];
+    const converted = messagesToModelMessages(messages, {
+      i1: {
+        id: 'i1',
+        filename: 'image.png',
+        sourceMimeType: 'image/png',
+        normalizedMimeType: 'image/png',
+        normalizedData: 'abc',
+        sizeBytes: 3,
+        status: 'ready',
+        dedupeKey: 'i1',
+      },
+    });
+    expect(converted).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Keep the other holes.' },
+          {
+            type: 'text',
+            text: `Model comment (OpenSCAD model coordinates):\n${JSON.stringify(comment)}`,
+          },
+          { type: 'image', image: 'abc', mediaType: 'image/png' },
+        ],
+      },
+    ]);
+  });
+
   it('serializes completed tool calls before later assistant text using toolCallId', () => {
     const messages: Message[] = [
       {

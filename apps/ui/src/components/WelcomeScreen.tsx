@@ -28,6 +28,7 @@ interface WelcomeScreenProps {
   onDraftTextChange: (text: string) => void;
   onDraftFilesSelected: (files: File[], sourceSurface?: ModelSelectionSurface) => void;
   onDraftRemoveAttachment: (attachmentId: string, sourceSurface?: ModelSelectionSurface) => void;
+  onDraftRemoveComment?: (commentId: string) => void;
   onStartWithDraft: (draftOverride?: AiDraft) => void;
   onStartManually: () => void;
   onOpenRecent: (path: string, type?: 'file' | 'folder') => Promise<RecentFileOpenResult>;
@@ -70,6 +71,7 @@ export function WelcomeScreen({
   onDraftTextChange,
   onDraftFilesSelected,
   onDraftRemoveAttachment,
+  onDraftRemoveComment,
   onStartWithDraft,
   onStartManually,
   onOpenRecent,
@@ -192,6 +194,7 @@ export function WelcomeScreen({
                 onTextChange={onDraftTextChange}
                 onFilesSelected={onDraftFilesSelected}
                 onRemoveAttachment={onDraftRemoveAttachment}
+                onRemoveComment={onDraftRemoveComment}
                 onSubmit={onStartWithDraft}
               />
               {displayPath && (

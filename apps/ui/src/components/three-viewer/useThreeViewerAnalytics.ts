@@ -20,6 +20,8 @@ function getViewerTool(mode: InteractionMode): ViewerTool {
       return 'section_plane';
     case 'annotate':
       return 'annotate';
+    case 'comment':
+      return 'comment';
     case 'orbit':
     default:
       return 'orbit';

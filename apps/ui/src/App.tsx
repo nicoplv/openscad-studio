@@ -607,12 +607,15 @@ function App() {
     currentProvider,
     currentModel,
     currentModelVisionSupport,
+    lastContextUsage,
     availableProviders,
     submitDraft,
     setDraft,
     setDraftText,
     addDraftFiles,
     removeDraftAttachment,
+    addDraftComment,
+    removeDraftComment,
     cancelStream,
     acceptDiff,
     rejectDiff,
@@ -1522,6 +1525,23 @@ function App() {
     [addDraftFiles, canAttachViewerAnnotation, hasCurrentModelApiKey]
   );
 
+  const attachViewerComment = useCallback<WorkspaceState['attachViewerComment']>(
+    async (comment) => {
+      openPanel('ai-chat', 'ai-chat', 'AI');
+      if (!hasCurrentModelApiKey) {
+        setSettingsInitialTab('ai');
+        setShowSettingsDialog(true);
+        return { status: 'missing-api-key' };
+      }
+      if (!canAttachViewerAnnotation) return { status: 'busy' };
+
+      addDraftComment(comment);
+      window.setTimeout(() => aiPromptPanelRef.current?.focusPrompt(), 0);
+      return { status: 'attached' };
+    },
+    [addDraftComment, canAttachViewerAnnotation, hasCurrentModelApiKey]
+  );
+
   const handleOpenEditorPanel = useCallback(() => {
     focusEditorPanel();
   }, [focusEditorPanel]);
@@ -2124,6 +2144,11 @@ function App() {
       onReorderTabs: reorderTabs,
       previewSrc: activePreviewSrc,
       previewKind: activePreviewKind,
+      previewCommentContext: {
+        renderTargetPath:
+          activeRenderArtifact?.renderTargetPath ?? renderTargetPath ?? activeTab.projectPath,
+        sourceHash: activeRenderArtifact?.sourceHash,
+      },
       isRendering: isRendering || isProjectLoading,
       error: activeError,
       renderReady: ready,
@@ -2145,14 +2170,17 @@ function App() {
       currentProvider,
       currentModel,
       currentModelVisionSupport,
+      lastContextUsage,
       availableProviders,
       submitDraft,
       setDraftText,
       addDraftFiles,
       removeDraftAttachment,
+      removeDraftComment,
       hasCurrentModelApiKey,
       canAttachViewerAnnotation,
       attachViewerAnnotationFile,
+      attachViewerComment,
       cancelStream,
       acceptDiff,
       rejectDiff,
@@ -2186,6 +2214,9 @@ function App() {
       reorderTabs,
       activePreviewSrc,
       activePreviewKind,
+      activeRenderArtifact,
+      renderTargetPath,
+      activeTab.projectPath,
       isRendering,
       isProjectLoading,
       activeError,
@@ -2209,14 +2240,17 @@ function App() {
       currentProvider,
       currentModel,
       currentModelVisionSupport,
+      lastContextUsage,
       availableProviders,
       submitDraft,
       setDraftText,
       addDraftFiles,
       removeDraftAttachment,
+      removeDraftComment,
       hasCurrentModelApiKey,
       canAttachViewerAnnotation,
       attachViewerAnnotationFile,
+      attachViewerComment,
       cancelStream,
       acceptDiff,
       rejectDiff,
@@ -2317,6 +2351,7 @@ function App() {
           void addDraftFiles(files);
         }}
         onDraftRemoveAttachment={removeDraftAttachment}
+        onDraftRemoveComment={removeDraftComment}
         onStartWithDraft={handleStartWithDraft}
         onStartManually={handleStartManually}
         onOpenRecent={handleOpenRecent}

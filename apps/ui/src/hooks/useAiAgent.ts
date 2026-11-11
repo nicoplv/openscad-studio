@@ -31,13 +31,14 @@ import {
 } from '../stores/apiKeyStore';
 import type {
   AiDraft,
+  AiContextUsage,
   AttachmentStore,
   Conversation,
   Message,
   ToolCall,
-  UserImagePart,
+  UserMessagePart,
   UserMessage,
-  UserTextPart,
+  ViewerComment,
   VisionSupport,
 } from '../types/aiChat';
 import {
@@ -47,6 +48,7 @@ import {
   processAttachmentFiles,
 } from '../utils/aiAttachments';
 import { getVisionSupportForModelId, messagesToModelMessages } from '../utils/aiMessages';
+import { prepareOpenAiCompatiblePreviewStep } from '../utils/aiPreviewImages';
 import { getPreferredDefaultModel } from '../utils/aiModels';
 import {
   createActiveTurnState,
@@ -83,6 +85,13 @@ function humanizeStreamError(errorText: string, provider?: AiProvider): string {
     return 'Could not reach the AI service — check your internet connection.';
   }
   return `Failed: ${errorText}`;
+}
+
+function getContextOverflowUsage(errorText: string): AiContextUsage | null {
+  const match = errorText.match(
+    /request \((\d+) tokens\) exceeds the available context size \((\d+) tokens\)/i
+  );
+  return match ? { inputTokens: Number(match[1]), contextLimit: Number(match[2]) } : null;
 }
 
 function extractApplyEditCheckpointId(output: unknown): string | null {
@@ -122,7 +131,7 @@ function revokePreviewUrlsForIds(ids: string[], attachments: AttachmentStore) {
 }
 
 function draftToUserParts(draft: AiDraft, attachments: AttachmentStore) {
-  const parts: Array<UserTextPart | UserImagePart> = [];
+  const parts: UserMessagePart[] = [];
   const readyAttachmentIds = getReadyAttachmentIds(draft, attachments);
   const trimmedText = draft.text.trim();
   const hasViewerAnnotationAttachment = readyAttachmentIds.some(
@@ -149,6 +158,10 @@ function draftToUserParts(draft: AiDraft, attachments: AttachmentStore) {
       width: attachment.width ?? 0,
       height: attachment.height ?? 0,
     });
+  }
+
+  for (const comment of draft.comments ?? []) {
+    parts.push({ type: 'comment', comment });
   }
 
   return parts;
@@ -199,6 +212,7 @@ export interface AiAgentState {
   currentProvider: AiProvider;
   currentModel: string;
   currentModelVisionSupport: VisionSupport;
+  lastContextUsage: AiContextUsage | null;
   draft: AiDraft;
   attachments: AttachmentStore;
   draftErrors: string[];
@@ -262,6 +276,7 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
     currentProvider: initialSelection.provider,
     currentModel: initialSelection.modelId,
     currentModelVisionSupport: getVisionSupportForModelIdImpl(initialSelection.modelId),
+    lastContextUsage: null,
     draft: EMPTY_DRAFT,
     attachments: {},
     draftErrors: [],
@@ -435,6 +450,7 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
       currentProvider: resolvedSelection.provider,
       currentModel: resolvedSelection.modelId,
       currentModelVisionSupport: getVisionSupportForModelIdImpl(resolvedSelection.modelId),
+      lastContextUsage: null,
     }));
     if (IS_DEV) {
       console.log(
@@ -721,6 +737,24 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
     });
   }, []);
 
+  const addDraftComment = useCallback((comment: ViewerComment) => {
+    setState((prev) => ({
+      ...prev,
+      draft: { ...prev.draft, comments: [...(prev.draft.comments ?? []), comment] },
+      draftErrors: [],
+    }));
+  }, []);
+
+  const removeDraftComment = useCallback((commentId: string) => {
+    setState((prev) => ({
+      ...prev,
+      draft: {
+        ...prev.draft,
+        comments: prev.draft.comments?.filter((comment) => comment.id !== commentId),
+      },
+    }));
+  }, []);
+
   const submitDraft = useCallback(
     async (draftOverride?: AiDraft) => {
       const currentState = stateRef.current;
@@ -814,6 +848,15 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
 
+      const updateContextUsage = (usage: AiContextUsage | null) => {
+        if (!usage || provider !== 'openai-compatible') return;
+        setState((prev) =>
+          prev.currentProvider === provider && prev.currentModel === currentState.currentModel
+            ? { ...prev, lastContextUsage: { ...prev.lastContextUsage, ...usage } }
+            : prev
+        );
+      };
+
       try {
         const model =
           provider === 'openai-compatible'
@@ -838,6 +881,7 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
           system: dynamicSystem,
           messages: modelMessages,
           tools,
+          prepareStep: provider === 'openai-compatible' ? prepareOpenAiCompatiblePreviewStep : undefined,
           stopWhen: stepCountIs(MAX_AGENT_STEPS),
           abortSignal: abortController.signal,
         });
@@ -888,8 +932,13 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
 
           syncActiveTurnState(turnUpdate.state);
 
+          if (chunk.type === 'finish-step' && chunk.usage?.inputTokens !== undefined) {
+            updateContextUsage({ inputTokens: chunk.usage.inputTokens });
+          }
+
           if (chunk.type === 'error') {
             streamErrorText = extractErrorText(chunk.error);
+            updateContextUsage(getContextOverflowUsage(streamErrorText));
             streamErrorObject =
               chunk.error instanceof Error ? chunk.error : new Error(streamErrorText);
             console.error('[useAiAgent] Stream error:', chunk.error);
@@ -927,6 +976,7 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
 
         console.error('[useAiAgent] Error submitting prompt:', error);
         const errorText = extractErrorText(error);
+        updateContextUsage(getContextOverflowUsage(errorText));
         const errorObject = error instanceof Error ? error : new Error(errorText);
 
         if (activeTurnRef.current) {
@@ -1009,6 +1059,7 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
         currentProvider: provider,
         currentModel: model,
         currentModelVisionSupport: getVisionSupportForModelIdImpl(model),
+        lastContextUsage: null,
       }));
       setStoredModelSelection({ provider, modelId: model });
       analytics.track('model selected', {
@@ -1045,6 +1096,7 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
         error: null,
         errorObject: null,
         currentToolCalls: [],
+        lastContextUsage: null,
       };
     });
   }, [analytics]);
@@ -1068,6 +1120,7 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
       setState((prev) => ({
         ...prev,
         messages: truncatedMessages,
+        lastContextUsage: null,
       }));
       analytics.track('checkpoint restored', {
         had_later_messages: stateRef.current.messages.length > truncatedMessages.length,
@@ -1100,6 +1153,8 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
     clearDraft,
     addDraftFiles,
     removeDraftAttachment,
+    addDraftComment,
+    removeDraftComment,
     canSubmitDraft: getDraftCanSubmit(state.draft, state.attachments),
     draftVisionBlockMessage: getVisionBlockMessage(
       state.draft,

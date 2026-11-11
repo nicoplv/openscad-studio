@@ -48,48 +48,56 @@ describe('ThreeViewer annotation wiring', () => {
     );
   });
 
-  it('tracks annotate mode selection as a 3D viewer tool event', () => {
-    const setInteractionMode = jest.fn();
-    const setDraftMeasurement = jest.fn();
-
-    const { result } = renderHook(() =>
-      useThreeViewerAnalytics({
-        interactionMode: 'orbit',
-        setInteractionMode,
-        setDraftMeasurement,
-        initialDraft: {
-          status: 'idle',
-          start: null,
-          current: null,
-          hoverPoint: null,
-          hoverNormal: null,
-        },
-        activeBounds: null,
-        loadedModel: null,
-        selection: {
-          objectUuid: null,
-          point: null,
-          normal: null,
-          bounds: null,
-        },
-        sectionState: null,
-        measurementUnit: 'mm',
-        snapEnabled: true,
-      })
-    );
-
-    act(() => {
-      result.current.handleModeChange('annotate', 'toolbar');
-    });
-
-    expect(setInteractionMode).toHaveBeenCalledWith('annotate');
-    expect(mockTrack).toHaveBeenCalledWith(
-      'viewer tool selected',
-      expect.objectContaining({
-        viewer_kind: '3d',
-        tool: 'annotate',
-        input_method: 'toolbar',
-      })
-    );
+  it('places Comment immediately after Annotate', () => {
+    const annotateIndex = VIEWER_TOOLS.findIndex((tool) => tool.id === 'annotate');
+    expect(VIEWER_TOOLS[annotateIndex + 1]).toMatchObject({ id: 'comment', label: 'Comment' });
   });
+
+  it.each(['annotate', 'comment'] as const)(
+    'tracks %s mode selection as a 3D viewer tool event',
+    (mode) => {
+      const setInteractionMode = jest.fn();
+      const setDraftMeasurement = jest.fn();
+
+      const { result } = renderHook(() =>
+        useThreeViewerAnalytics({
+          interactionMode: 'orbit',
+          setInteractionMode,
+          setDraftMeasurement,
+          initialDraft: {
+            status: 'idle',
+            start: null,
+            current: null,
+            hoverPoint: null,
+            hoverNormal: null,
+          },
+          activeBounds: null,
+          loadedModel: null,
+          selection: {
+            objectUuid: null,
+            point: null,
+            normal: null,
+            bounds: null,
+          },
+          sectionState: null,
+          measurementUnit: 'mm',
+          snapEnabled: true,
+        })
+      );
+
+      act(() => {
+        result.current.handleModeChange(mode, 'toolbar');
+      });
+
+      expect(setInteractionMode).toHaveBeenCalledWith(mode);
+      expect(mockTrack).toHaveBeenCalledWith(
+        'viewer tool selected',
+        expect.objectContaining({
+          viewer_kind: '3d',
+          tool: mode,
+          input_method: 'toolbar',
+        })
+      );
+    }
+  );
 });

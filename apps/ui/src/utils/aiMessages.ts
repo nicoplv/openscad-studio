@@ -110,6 +110,14 @@ function userMessagePartsToModelContent(message: UserMessage, attachments: Attac
   > = [];
 
   for (const part of message.parts) {
+    if (part.type === 'comment') {
+      parts.push({
+        type: 'text',
+        text: `Model comment (OpenSCAD model coordinates):\n${JSON.stringify(part.comment)}`,
+      });
+      continue;
+    }
+
     if (part.type === 'text') {
       if (part.text.trim()) {
         parts.push({ type: 'text', text: part.text });

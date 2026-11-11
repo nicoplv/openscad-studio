@@ -5,7 +5,8 @@ export type InteractionMode =
   | 'measure-distance'
   | 'measure-bbox'
   | 'section-plane'
-  | 'annotate';
+  | 'annotate'
+  | 'comment';
 
 export type MeasurementSnapKind = 'surface' | 'vertex' | 'edge';
 export type AxisLock = 'x' | 'y' | 'z' | null;

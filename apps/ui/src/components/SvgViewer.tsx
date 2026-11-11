@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { TbBrush, TbFocus2, TbGrid3X3, TbX, TbZoomIn, TbZoomOut } from 'react-icons/tb';
+import {
+  TbBrush,
+  TbFocus2,
+  TbGrid3X3,
+  TbX,
+  TbZoomIn,
+  TbZoomOut,
+  TbMessageCircle,
+} from 'react-icons/tb';
 import { useTheme } from '../contexts/ThemeContext';
 import { getPreviewSceneStyle } from '../services/previewSceneConfig';
 import { Button, IconButton, Text } from './ui';
@@ -25,6 +33,7 @@ import {
   actualSizeViewport,
   clampScale,
   clientToSvgPoint,
+  svgToClientPoint,
   fitViewportToBounds,
   sanitizeViewport,
   zoomAroundClientPoint,
@@ -51,6 +60,13 @@ import {
 import { captureRenderedSvgElementImage } from '../utils/captureSvgPreviewImage';
 import { notifyError, notifySuccess } from '../utils/notifications';
 import type Konva from 'konva';
+import type { ViewerComment, ViewerCommentContext } from '../types/aiChat';
+import { CommentPopover } from './viewer-comment/CommentPopover';
+import {
+  useViewerCommentSession,
+  type ViewerCommentAttachResult,
+} from './viewer-comment/useViewerCommentSession';
+import { svgPointToCommentPosition } from './viewer-comment/commentGeometry';
 
 interface SvgViewerProps {
   src: string;
@@ -59,6 +75,8 @@ interface SvgViewerProps {
   hasCurrentModelApiKey: boolean;
   canAttachToAi: boolean;
   onAttachToAi: (file: File) => Promise<ViewerAnnotationAttachResult>;
+  commentContext?: ViewerCommentContext;
+  onAttachComment?: (comment: ViewerComment) => Promise<ViewerCommentAttachResult>;
 }
 
 type DocumentStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'error';
@@ -132,12 +150,12 @@ function Svg2DToolPalette({
           <button
             key={tool.id}
             type="button"
-            title={`${tool.label} (${tool.shortcut})`}
-            aria-label={`${tool.label} (${tool.shortcut})`}
+            title={`${tool.label}${tool.shortcut ? ` (${tool.shortcut})` : ''}`}
+            aria-label={`${tool.label}${tool.shortcut ? ` (${tool.shortcut})` : ''}`}
             disabled={isDisabled}
             onClick={() => onModeChange(tool.id)}
             data-testid={`preview-2d-tool-${
-              tool.id === 'pan' ? 'pan' : tool.id === 'measure-distance' ? 'measure' : 'annotate'
+              tool.id === 'pan' ? 'pan' : tool.id === 'measure-distance' ? 'measure' : tool.id
             }`}
             style={{
               width: '32px',
@@ -361,6 +379,8 @@ export function SvgViewer({
   hasCurrentModelApiKey,
   canAttachToAi,
   onAttachToAi,
+  commentContext,
+  onAttachComment,
 }: SvgViewerProps) {
   const { theme } = useTheme();
   const [settings] = useSettings();
@@ -396,6 +416,15 @@ export function SvgViewer({
   const annotationSession = useViewerAnnotationSession();
   const resetAnnotationSession = annotationSession.resetSession;
   const analytics = useAnalytics();
+  const commentSession = useViewerCommentSession({
+    active: viewMode === 'comment',
+    previewKey: `${commentContext?.renderTargetPath}:${src}`,
+    context: commentContext,
+    viewerKind: '2d',
+    measurementUnit: settings.viewer.measurementUnit,
+    onAttach: onAttachComment,
+    onNotice: setLiveMessage,
+  });
 
   const themeColors = useMemo(
     () => ({
@@ -876,7 +905,7 @@ export function SvgViewer({
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     containerRef.current?.focus();
 
-    if (viewMode === 'annotate') {
+    if (viewMode === 'annotate' || commentSession.placement) {
       return;
     }
 
@@ -888,6 +917,7 @@ export function SvgViewer({
     }
 
     if (activePointersRef.current.size >= 2) {
+      if (viewMode === 'comment') suppressClickRef.current = true;
       // Second finger down — cancel any pan drag and initialize pinch tracking
       dragRef.current = null;
       const pts = [...activePointersRef.current.values()];
@@ -911,7 +941,7 @@ export function SvgViewer({
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (viewMode === 'annotate') {
+    if (viewMode === 'annotate' || commentSession.placement) {
       return;
     }
 
@@ -988,7 +1018,12 @@ export function SvgViewer({
   };
 
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    if (!loadedDocument || documentState.status === 'loading' || viewMode === 'annotate') {
+    if (
+      !loadedDocument ||
+      documentState.status === 'loading' ||
+      viewMode === 'annotate' ||
+      commentSession.placement
+    ) {
       return;
     }
 
@@ -1011,6 +1046,24 @@ export function SvgViewer({
     }
 
     if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) {
+      return;
+    }
+
+    if (viewMode === 'comment') {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (
+        rect &&
+        loadedDocument &&
+        documentState.status === 'ready' &&
+        !commentSession.placement &&
+        event.button === 0
+      ) {
+        const point = clientToSvgPoint(event.clientX, event.clientY, rect, viewport);
+        commentSession.place(svgPointToCommentPosition(point), {
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top,
+        });
+      }
       return;
     }
 
@@ -1096,6 +1149,11 @@ export function SvgViewer({
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (
+      event.target instanceof HTMLElement &&
+      event.target.closest('textarea, input, [contenteditable="true"]')
+    )
+      return;
     switch (event.key) {
       case 'Shift':
         if (
@@ -1142,7 +1200,10 @@ export function SvgViewer({
         break;
       case 'Escape':
         event.preventDefault();
-        if (viewMode === 'annotate') {
+        if (viewMode === 'comment') {
+          commentSession.cancel();
+          handleViewModeChange('pan', 'shortcut');
+        } else if (viewMode === 'annotate') {
           exitAnnotationMode();
         } else if (viewMode === 'measure-distance') {
           if (isDraftMeasurementActive(draftMeasurement)) {
@@ -1227,7 +1288,7 @@ export function SvgViewer({
             />
           )}
           <div
-            className="absolute top-2 right-2 z-20 flex gap-2"
+            className="absolute top-2 right-2 z-20 flex max-w-[calc(100%-16px)] flex-wrap justify-end gap-2"
             onClick={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
           >
@@ -1295,6 +1356,20 @@ export function SvgViewer({
             >
               <TbBrush size={18} />
             </IconButton>
+            {isMobile ? (
+              <IconButton
+                aria-label="Comment on model"
+                title="Comment on model"
+                data-testid="preview-2d-toggle-comment"
+                disabled={!canInteract}
+                isActive={viewMode === 'comment'}
+                onClick={() =>
+                  handleViewModeChange(viewMode === 'comment' ? 'pan' : 'comment', 'toolbar')
+                }
+              >
+                <TbMessageCircle size={18} />
+              </IconButton>
+            ) : null}
             <IconButton
               aria-label="Toggle grid"
               title="Toggle grid"
@@ -1349,7 +1424,9 @@ export function SvgViewer({
                 overflow="hidden"
                 style={{
                   cursor:
-                    viewMode === 'measure-distance' || viewMode === 'annotate'
+                    viewMode === 'measure-distance' ||
+                    viewMode === 'annotate' ||
+                    viewMode === 'comment'
                       ? 'crosshair'
                       : dragRef.current
                         ? 'grabbing'
@@ -1701,6 +1778,40 @@ export function SvgViewer({
             </div>
           ) : null}
 
+          {commentSession.placement ? (
+            <CommentPopover
+              placement={{
+                ...commentSession.placement,
+                anchor: svgToClientPoint(
+                  {
+                    x: commentSession.placement.comment.position.x,
+                    y: -commentSession.placement.comment.position.y,
+                  },
+                  { left: 0, top: 0 },
+                  viewport
+                ),
+              }}
+              surface={containerSize}
+              text={commentSession.placement.comment.text}
+              error={commentSession.error}
+              canAttach={canAttachToAi}
+              isAttaching={commentSession.isAttaching}
+              onTextChange={commentSession.setText}
+              onAttach={() => void commentSession.attach()}
+              onCancel={() => {
+                commentSession.cancel();
+                containerRef.current?.focus();
+              }}
+            />
+          ) : null}
+          {viewMode === 'comment' && !commentSession.placement && liveMessage ? (
+            <div
+              className="pointer-events-none absolute bottom-3 left-3 right-3 z-20 text-center text-xs"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              {liveMessage}
+            </div>
+          ) : null}
           {viewMode === 'annotate' ? (
             <AnnotationPanel
               tool={annotationSession.tool}

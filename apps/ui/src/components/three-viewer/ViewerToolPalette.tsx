@@ -44,7 +44,7 @@ export function ViewerToolPalette({ mode, onModeChange, loadedModel }: ViewerToo
                     ? 'bbox'
                     : tool.id === 'section-plane'
                       ? 'section'
-                      : 'annotate'
+                      : tool.id
             }`}
           >
             <Icon size={17} />

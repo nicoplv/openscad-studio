@@ -467,9 +467,10 @@ describe('buildTools', () => {
 
     const result = (await tools.get_preview_screenshot.execute({
       view: 'isometric',
-    })) as { image_data_url: string };
+    })) as { image_data_url: string; __previewKind: '2d' | '3d' };
 
     expect(result.image_data_url).toBe('data:image/png;base64,AAA=');
+    expect(result.__previewKind).toBe('3d');
     expect(mockCaptureOffscreen).toHaveBeenCalledWith(
       'blob:preview-3d',
       expect.objectContaining({

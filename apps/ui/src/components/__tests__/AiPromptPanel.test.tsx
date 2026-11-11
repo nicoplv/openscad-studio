@@ -34,6 +34,7 @@ jest.unstable_mockModule('@/components/AiAccessEmptyState', () => ({
 
 jest.unstable_mockModule('@/stores/apiKeyStore', () => ({
   useHasApiKey: () => true,
+  getOpenAiCompatibleConfig: () => ({ baseUrl: '', modelId: '', apiKey: null }),
 }));
 
 let AiPromptPanel: typeof import('../AiPromptPanel').AiPromptPanel;
@@ -164,6 +165,38 @@ function installScrollMetrics(
 describe('AiPromptPanel', () => {
   beforeAll(async () => {
     ({ AiPromptPanel } = await import('@/components/AiPromptPanel'));
+  });
+
+  it('displays a submitted comment object in the conversation', () => {
+    renderWithProviders(
+      <AiPromptPanel
+        {...createBaseProps({
+          messages: [
+            {
+              type: 'user',
+              id: 'comment-message',
+              timestamp: 1,
+              parts: [
+                {
+                  type: 'comment',
+                  comment: {
+                    id: 'c1',
+                    text: 'Make the hole bigger',
+                    position: { x: 12, y: -20, z: 5 },
+                    viewerKind: '3d',
+                    measurementUnit: 'mm',
+                    renderTargetPath: 'parts/main.scad',
+                  },
+                },
+              ],
+            },
+          ],
+        })}
+      />
+    );
+    expect(screen.getByText('Make the hole bigger')).toBeTruthy();
+    expect(screen.getByText('3D comment')).toBeTruthy();
+    expect(screen.getByText('parts/main.scad')).toBeTruthy();
   });
 
   it('keeps completed tool payloads collapsed until expanded', () => {

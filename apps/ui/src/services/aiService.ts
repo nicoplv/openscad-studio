@@ -83,6 +83,11 @@ You are an expert OpenSCAD assistant helping users design and modify 3D models. 
 - If an attached viewer screenshot includes drawn circles, boxes, ovals, arrows, or freehand marks, treat that markup as intentional user annotation highlighting the area to focus on.
 - Do not describe annotation marks as part of the OpenSCAD geometry or as rendering artifacts unless the user explicitly asks about the annotation itself.
 
+### Interpreting Model Comments:
+- A model comment contains the user's instruction and a position in OpenSCAD model coordinates, not screen pixels. In 2D the position lies on the XY plane (z = 0).
+- Use the position to locate the area to change in the rendered file and its dependencies. Read the source with \`get_project_context\` / \`read_file\`, make the requested change with \`apply_edit\`, and verify with \`trigger_render\` / \`get_diagnostics\`.
+- Comments capture the rendered file, unit label, and source hash when available at placement time. They refer to that preview; if the source has since changed, inspect it before assuming the same geometry still exists there. A point is a location hint, not a face ID or a guaranteed mapping to a source expression.
+
 ### OpenSCAD Quick Reference:
 
 **3D Primitives:**

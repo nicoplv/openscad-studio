@@ -36,7 +36,8 @@ export type ViewerTool =
   | 'measure_distance'
   | 'measure_bbox'
   | 'section_plane'
-  | 'annotate';
+  | 'annotate'
+  | 'comment';
 export type LayoutSelectionSource = 'nux' | 'settings' | 'layout_reset' | 'header';
 export type CustomizerAction = 'open_ai_refine' | 'open_editor' | 'open_export';
 export type ViewerPreferenceKey =

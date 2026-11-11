@@ -4,6 +4,8 @@ import { InlineErrorBoundary } from './ErrorBoundary';
 import { Text } from './ui';
 import type { RenderKind } from '../hooks/useOpenScad';
 import type { ViewerAnnotationAttachResult } from './viewer-annotation';
+import type { ViewerComment, ViewerCommentContext } from '../types/aiChat';
+import type { ViewerCommentAttachResult } from './viewer-comment/useViewerCommentSession';
 
 interface PreviewProps {
   src: string;
@@ -15,6 +17,8 @@ interface PreviewProps {
   hasCurrentModelApiKey: boolean;
   canAttachViewerAnnotation: boolean;
   onAttachViewerAnnotationFile: (file: File) => Promise<ViewerAnnotationAttachResult>;
+  commentContext: ViewerCommentContext;
+  onAttachComment: (comment: ViewerComment) => Promise<ViewerCommentAttachResult>;
 }
 
 export function Preview({
@@ -27,6 +31,8 @@ export function Preview({
   hasCurrentModelApiKey,
   canAttachViewerAnnotation,
   onAttachViewerAnnotationFile,
+  commentContext,
+  onAttachComment,
 }: PreviewProps) {
   if (import.meta.env.DEV) {
     console.log('[Preview] Render:', {
@@ -88,6 +94,8 @@ export function Preview({
           hasCurrentModelApiKey={hasCurrentModelApiKey}
           canAttachToAi={canAttachViewerAnnotation}
           onAttachToAi={onAttachViewerAnnotationFile}
+          commentContext={commentContext}
+          onAttachComment={onAttachComment}
         />
       </InlineErrorBoundary>
     );
@@ -96,13 +104,14 @@ export function Preview({
   if (kind === 'svg') {
     return (
       <SvgViewer
-        key={src}
         src={src}
         viewerId={viewerId}
         onVisualReady={onVisualReady}
         hasCurrentModelApiKey={hasCurrentModelApiKey}
         canAttachToAi={canAttachViewerAnnotation}
         onAttachToAi={onAttachViewerAnnotationFile}
+        commentContext={commentContext}
+        onAttachComment={onAttachComment}
       />
     );
   }

@@ -5,10 +5,20 @@ import type { RenderKind } from '../hooks/useOpenScad';
 import type { AddDraftFilesResult } from '../hooks/useAiAgent';
 import type { AiPromptPanelRef } from '../components/AiPromptPanel';
 import type { ViewerAnnotationAttachResult } from '../components/viewer-annotation';
+import type { ViewerCommentAttachResult } from '../components/viewer-comment/useViewerCommentSession';
 import type { AiProvider } from '../stores/apiKeyStore';
 import type { Settings } from '../stores/settingsStore';
 import type { WorkspaceTab } from '../stores/workspaceTypes';
-import type { AiDraft, AttachmentStore, Message, ToolCall, VisionSupport } from '../types/aiChat';
+import type {
+  AiContextUsage,
+  AiDraft,
+  AttachmentStore,
+  Message,
+  ToolCall,
+  VisionSupport,
+  ViewerComment,
+  ViewerCommentContext,
+} from '../types/aiChat';
 
 export interface WorkspaceState {
   // Editor
@@ -30,6 +40,7 @@ export interface WorkspaceState {
   // Preview
   previewSrc: string;
   previewKind: RenderKind;
+  previewCommentContext: ViewerCommentContext;
   isRendering: boolean;
   error: string | undefined;
   renderReady: boolean;
@@ -53,6 +64,7 @@ export interface WorkspaceState {
   currentProvider: AiProvider;
   currentModel: string;
   currentModelVisionSupport: VisionSupport;
+  lastContextUsage: AiContextUsage | null;
   availableProviders: AiProvider[];
   submitDraft: () => void;
   setDraftText: (text: string) => void;
@@ -61,9 +73,11 @@ export interface WorkspaceState {
     sourceSurface?: ModelSelectionSurface
   ) => Promise<AddDraftFilesResult | undefined>;
   removeDraftAttachment: (attachmentId: string, sourceSurface?: ModelSelectionSurface) => void;
+  removeDraftComment: (commentId: string) => void;
   hasCurrentModelApiKey: boolean;
   canAttachViewerAnnotation: boolean;
   attachViewerAnnotationFile: (file: File) => Promise<ViewerAnnotationAttachResult>;
+  attachViewerComment: (comment: ViewerComment) => Promise<ViewerCommentAttachResult>;
   cancelStream: () => void;
   acceptDiff: () => void;
   rejectDiff: () => void;

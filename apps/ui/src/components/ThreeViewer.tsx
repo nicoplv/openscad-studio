@@ -74,7 +74,7 @@ import type {
   SectionPlaneState,
   SelectionState,
 } from './three-viewer/types';
-import { TbBox, TbBoxModel, TbBrush, TbFocus2, TbSun, TbX } from 'react-icons/tb';
+import { TbBox, TbBoxModel, TbBrush, TbFocus2, TbSun, TbX, TbMessageCircle } from 'react-icons/tb';
 import type { ToolContextPanelProps } from './three-viewer/types';
 import { updateSetting, useSettings } from '../stores/settingsStore';
 import { IconButton, Text } from './ui';
@@ -91,6 +91,16 @@ import {
 } from './viewer-annotation';
 import { notifyError, notifySuccess } from '../utils/notifications';
 import type Konva from 'konva';
+import type { ViewerComment, ViewerCommentContext } from '../types/aiChat';
+import { CommentPopover } from './viewer-comment/CommentPopover';
+import {
+  useViewerCommentSession,
+  type ViewerCommentAttachResult,
+} from './viewer-comment/useViewerCommentSession';
+import {
+  threePointToCommentPosition,
+  projectCommentPosition,
+} from './viewer-comment/commentGeometry';
 
 interface ThreeViewerProps {
   preview3dPath: string;
@@ -100,6 +110,8 @@ interface ThreeViewerProps {
   hasCurrentModelApiKey: boolean;
   canAttachToAi: boolean;
   onAttachToAi: (file: File) => Promise<ViewerAnnotationAttachResult>;
+  commentContext?: ViewerCommentContext;
+  onAttachComment?: (comment: ViewerComment) => Promise<ViewerCommentAttachResult>;
 }
 
 const introAnimatedViewerIds = new Set<string>();
@@ -537,6 +549,8 @@ function ViewerInteractionController({
   onSelectionChange,
   onDraftChange,
   onCommitMeasurement,
+  commentBlocked,
+  onCommentPick,
 }: {
   mode: InteractionMode;
   model: LoadedPreviewModel | null;
@@ -546,10 +560,13 @@ function ViewerInteractionController({
   onSelectionChange: (selection: SelectionState) => void;
   onDraftChange: (draft: MeasurementDraft3D) => void;
   onCommitMeasurement: (measurement: MeasurementRecord3D) => void;
+  commentBlocked: boolean;
+  onCommentPick: (hit: RaycastResult | null, anchor: { x: number; y: number }) => void;
 }) {
   const camera = useThree((state) => state.camera);
   const gl = useThree((state) => state.gl);
-  const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
+  const pointerDownRef = useRef<{ x: number; y: number; moved?: boolean } | null>(null);
+  const commentPointersRef = useRef(new Set<number>());
 
   useEffect(() => {
     const dom = gl.domElement;
@@ -568,6 +585,13 @@ function ViewerInteractionController({
     };
 
     const handlePointerMove = (event: PointerEvent) => {
+      if (mode === 'comment') {
+        const start = pointerDownRef.current;
+        if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 4) {
+          start.moved = true;
+        }
+        return;
+      }
       if (mode === 'orbit' || mode === 'measure-bbox') {
         onHoverChange(createSelectionStateFromRaycast(model, resolveRaycast(event)));
         return;
@@ -604,6 +628,14 @@ function ViewerInteractionController({
     };
 
     const handlePointerDown = (event: PointerEvent) => {
+      if (mode === 'comment') {
+        if (commentBlocked || event.button !== 0) return;
+        commentPointersRef.current.add(event.pointerId);
+        if (commentPointersRef.current.size > 1) {
+          pointerDownRef.current = null;
+          return;
+        }
+      }
       pointerDownRef.current = { x: event.clientX, y: event.clientY };
     };
 
@@ -612,11 +644,13 @@ function ViewerInteractionController({
     };
 
     const handlePointerUp = (event: PointerEvent) => {
+      if (mode === 'comment') commentPointersRef.current.delete(event.pointerId);
       if (!pointerDownRef.current) {
         return;
       }
 
       const moved =
+        pointerDownRef.current.moved ||
         Math.hypot(
           event.clientX - pointerDownRef.current.x,
           event.clientY - pointerDownRef.current.y
@@ -624,6 +658,16 @@ function ViewerInteractionController({
       pointerDownRef.current = null;
 
       if (moved) {
+        return;
+      }
+
+      if (mode === 'comment') {
+        if (commentBlocked || event.button !== 0) return;
+        const rect = dom.getBoundingClientRect();
+        onCommentPick(resolveRaycast(event), {
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top,
+        });
         return;
       }
 
@@ -702,16 +746,24 @@ function ViewerInteractionController({
       });
     };
 
+    const handlePointerCancel = () => {
+      pointerDownRef.current = null;
+      commentPointersRef.current.clear();
+    };
+
     dom.addEventListener('pointermove', handlePointerMove);
     dom.addEventListener('pointerdown', handlePointerDown);
     dom.addEventListener('pointerup', handlePointerUp);
     dom.addEventListener('pointerleave', handlePointerLeave);
+    dom.addEventListener('pointercancel', handlePointerCancel);
 
     return () => {
       dom.removeEventListener('pointermove', handlePointerMove);
       dom.removeEventListener('pointerdown', handlePointerDown);
       dom.removeEventListener('pointerup', handlePointerUp);
       dom.removeEventListener('pointerleave', handlePointerLeave);
+      dom.removeEventListener('pointercancel', handlePointerCancel);
+      if (mode === 'comment') handlePointerCancel();
     };
   }, [
     camera,
@@ -720,12 +772,25 @@ function ViewerInteractionController({
     mode,
     model,
     onCommitMeasurement,
+    commentBlocked,
+    onCommentPick,
     onDraftChange,
     onHoverChange,
     onSelectionChange,
     snapEnabled,
   ]);
 
+  return null;
+}
+
+function CommentAnchor3D({
+  position,
+  onChange,
+}: {
+  position: ViewerComment['position'];
+  onChange: (anchor: { x: number; y: number }) => void;
+}) {
+  useFrame(({ camera, size }) => onChange(projectCommentPosition(position, camera, size)));
   return null;
 }
 
@@ -1034,6 +1099,8 @@ export function ThreeViewer({
   hasCurrentModelApiKey,
   canAttachToAi,
   onAttachToAi,
+  commentContext,
+  onAttachComment,
 }: ThreeViewerProps) {
   const { theme } = useTheme();
   const [settings] = useSettings();
@@ -1066,6 +1133,15 @@ export function ThreeViewer({
   const annotationSession = useViewerAnnotationSession();
   const resetAnnotationSession = annotationSession.resetSession;
   const analytics = useAnalytics();
+  const commentSession = useViewerCommentSession({
+    active: interactionMode === 'comment',
+    previewKey: `${commentContext?.renderTargetPath}:${preview3dPath}`,
+    context: commentContext,
+    viewerKind: '3d',
+    measurementUnit: settings.viewer.measurementUnit,
+    onAttach: onAttachComment,
+    onNotice: setLiveMessage,
+  });
 
   const gridMetrics = useMemo(() => derivePreviewGridMetrics(modelFrame), [modelFrame]);
   const axisMetrics = useMemo(
@@ -1097,7 +1173,7 @@ export function ThreeViewer({
         : null,
     [loadedModel, sectionState]
   );
-  const cameraControlsEnabled = interactionMode !== 'annotate';
+  const cameraControlsEnabled = interactionMode !== 'annotate' && !commentSession.placement;
 
   const activeBounds = selection.bounds ?? loadedModel?.bounds ?? null;
 
@@ -1463,6 +1539,11 @@ export function ThreeViewer({
   );
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (
+      event.target instanceof HTMLElement &&
+      event.target.closest('textarea, input, [contenteditable="true"]')
+    )
+      return;
     if (event.key === 'Shift') {
       setShiftPanActive(true);
     }
@@ -1497,7 +1578,10 @@ export function ThreeViewer({
         break;
       case 'Escape':
         event.preventDefault();
-        if (interactionMode === 'annotate') {
+        if (interactionMode === 'comment') {
+          commentSession.cancel();
+          handleModeChange('orbit', 'shortcut');
+        } else if (interactionMode === 'annotate') {
           exitAnnotationMode();
         } else if (
           interactionMode === 'measure-distance' &&
@@ -1641,6 +1725,7 @@ export function ThreeViewer({
         <div
           ref={previewSurfaceRef}
           className="relative flex-1 min-w-0"
+          style={{ cursor: interactionMode === 'comment' ? 'crosshair' : undefined }}
           data-preview-root={viewerId ?? 'default-preview'}
         >
           {!isMobile && (
@@ -1698,16 +1783,28 @@ export function ThreeViewer({
             </IconButton>
 
             {isMobile ? (
-              <IconButton
-                variant="toolbar"
-                onClick={() => handleModeChange('annotate', 'toolbar')}
-                isActive={interactionMode === 'annotate'}
-                title="Annotate Preview"
-                tooltipSide="bottom"
-                data-testid="preview-toggle-annotate"
-              >
-                <TbBrush size={18} />
-              </IconButton>
+              <>
+                <IconButton
+                  variant="toolbar"
+                  onClick={() => handleModeChange('annotate', 'toolbar')}
+                  isActive={interactionMode === 'annotate'}
+                  title="Annotate Preview"
+                  tooltipSide="bottom"
+                  data-testid="preview-toggle-annotate"
+                >
+                  <TbBrush size={18} />
+                </IconButton>
+                <IconButton
+                  variant="toolbar"
+                  onClick={() => handleModeChange('comment', 'toolbar')}
+                  isActive={interactionMode === 'comment'}
+                  disabled={!loadedModel}
+                  title="Comment on Model"
+                  data-testid="preview-toggle-comment"
+                >
+                  <TbMessageCircle size={18} />
+                </IconButton>
+              </>
             ) : null}
           </div>
 
@@ -1909,7 +2006,24 @@ export function ThreeViewer({
               onSelectionChange={handleSelectionChange}
               onDraftChange={setDraftMeasurement}
               onCommitMeasurement={handleCommitMeasurement}
+              commentBlocked={Boolean(commentSession.placement) || Boolean(isLoading)}
+              onCommentPick={(hit, anchor) => {
+                if (!hit) {
+                  setLiveMessage('Click a model surface to add a comment.');
+                  return;
+                }
+                setLiveMessage('');
+                cameraControlsRef.current?.stop();
+                commentSession.place(threePointToCommentPosition(hit.point), anchor);
+              }}
             />
+
+            {commentSession.placement ? (
+              <CommentAnchor3D
+                position={commentSession.placement.comment.position}
+                onChange={commentSession.updateAnchor}
+              />
+            ) : null}
 
             <CameraControls
               ref={cameraControlsRef}
@@ -1924,7 +2038,7 @@ export function ThreeViewer({
               truckSpeed={1}
             />
 
-            {showViewcube ? (
+            {showViewcube && !commentSession.placement ? (
               <GizmoHelper alignment="bottom-left" margin={[80, 80]}>
                 <GizmoViewcube
                   font="16px Inter, sans-serif"
@@ -1936,6 +2050,31 @@ export function ThreeViewer({
               </GizmoHelper>
             ) : null}
           </Canvas>
+
+          {interactionMode === 'comment' && !commentSession.placement && liveMessage ? (
+            <div
+              className="pointer-events-none absolute bottom-3 left-3 right-3 z-20 text-center text-xs"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              {liveMessage}
+            </div>
+          ) : null}
+          {commentSession.placement ? (
+            <CommentPopover
+              placement={commentSession.placement}
+              surface={previewSurfaceSize}
+              text={commentSession.placement.comment.text}
+              error={commentSession.error}
+              canAttach={canAttachToAi}
+              isAttaching={commentSession.isAttaching}
+              onTextChange={commentSession.setText}
+              onAttach={() => void commentSession.attach()}
+              onCancel={() => {
+                commentSession.cancel();
+                rootRef.current?.focus();
+              }}
+            />
+          ) : null}
 
           {interactionMode === 'annotate' &&
           previewSurfaceSize.width > 0 &&

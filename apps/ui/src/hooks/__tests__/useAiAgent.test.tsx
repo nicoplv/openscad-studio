@@ -16,6 +16,7 @@ import {
   type AttachmentRecord,
   type Message,
   type UserMessage,
+  type ViewerComment,
 } from '../../types/aiChat';
 import { useAiAgent } from '../useAiAgent';
 import {
@@ -48,6 +49,16 @@ function createReadyAttachment(
 function createHarness(options?: Parameters<typeof useAiAgent>[0]) {
   return createHookHarness(() => useAiAgent(options));
 }
+
+const viewerComment: ViewerComment = {
+  id: 'comment-1',
+  text: 'Make the hole bigger',
+  position: { x: 12.3456789, y: -20, z: 5 },
+  viewerKind: '3d',
+  measurementUnit: 'mm',
+  renderTargetPath: 'main.scad',
+  sourceHash: 'render-1',
+};
 
 function createApplyEditOutput(checkpointId?: string) {
   return {
@@ -364,10 +375,18 @@ describe('useAiAgent', () => {
         { type: 'text-delta', id: 'text-1', text: 'Local done.' },
         { type: 'text-end', id: 'text-1' },
         {
+          type: 'finish-step',
+          response: {} as never,
+          usage: { inputTokens: 8240 } as never,
+          finishReason: 'stop',
+          rawFinishReason: 'stop',
+          providerMetadata: undefined,
+        },
+        {
           type: 'finish',
           finishReason: 'stop',
           rawFinishReason: 'stop',
-          totalUsage: {} as never,
+          totalUsage: { inputTokens: 13500 } as never,
         },
       ] satisfies StreamChunk[])
     );
@@ -398,6 +417,7 @@ describe('useAiAgent', () => {
       type: 'assistant',
       content: 'Local done.',
     });
+    expect(hook.current().lastContextUsage).toEqual({ inputTokens: 8240 });
     expect(analytics.track).toHaveBeenCalledWith(
       'ai request submitted',
       expect.objectContaining({
@@ -405,6 +425,27 @@ describe('useAiAgent', () => {
         model_id: 'gemma4:12b',
       })
     );
+
+    startAiStream.mockResolvedValueOnce(
+      createStreamResult([
+        {
+          type: 'error',
+          error: new Error(
+            'request (114753 tokens) exceeds the available context size (110080 tokens), try increasing it'
+          ),
+        },
+      ])
+    );
+    await act(async () => {
+      await hook.current().submitPrompt('Continue');
+    });
+    expect(hook.current().lastContextUsage).toEqual({
+      inputTokens: 114753,
+      contextLimit: 110080,
+    });
+
+    act(() => hook.current().newConversation());
+    expect(hook.current().lastContextUsage).toBeNull();
   });
 
   it('shows a local-provider reachability message when OpenAI-compatible fetch fails', async () => {
@@ -537,6 +578,90 @@ describe('useAiAgent', () => {
 
     expect(startAiStream).not.toHaveBeenCalled();
     expect(hook.current().draftErrors[0]).toContain('does not support image inputs');
+  });
+
+  it('queues and removes comments without submitting, and permits comment-only input with a text-only model', async () => {
+    storeApiKey('anthropic', 'test-key');
+    const startAiStream = jest.fn(async () => createStreamResult([]));
+    const hook = createHarness({
+      testOverrides: {
+        availableProviders: ['anthropic'],
+        createModel: (() => ({})) as never,
+        buildTools: (() => ({})) as never,
+        getVisionSupportForModelId: (() => 'no') as never,
+        startAiStream: startAiStream as never,
+      },
+    });
+    act(() => hook.current().addDraftComment(viewerComment));
+    act(() => hook.current().addDraftComment({ ...viewerComment, id: 'remove-me' }));
+    act(() => hook.current().removeDraftComment('remove-me'));
+    expect(startAiStream).not.toHaveBeenCalled();
+    expect(hook.current().draft.comments).toEqual([viewerComment]);
+    expect(hook.current().canSubmitDraft).toBe(true);
+    expect(hook.current().draftVisionBlockMessage).toBeNull();
+    await act(async () => hook.current().submitDraft());
+    expect(startAiStream).toHaveBeenCalledTimes(1);
+    expect(hook.current().messages[0]).toMatchObject({
+      type: 'user',
+      parts: [{ type: 'comment', comment: viewerComment }],
+    });
+    expect(hook.current().draft.comments).toBeUndefined();
+  });
+
+  it('preserves multiple comments alongside text and image attachments in the submitted message', async () => {
+    storeApiKey('anthropic', 'test-key');
+    const hook = createHarness({
+      testOverrides: {
+        availableProviders: ['anthropic'],
+        createModel: (() => ({})) as never,
+        buildTools: (() => ({})) as never,
+        getVisionSupportForModelId: (() => 'yes') as never,
+        startAiStream: (async () => createStreamResult([])) as never,
+        processAttachmentFiles: (async () => ({
+          attachments: [createReadyAttachment('image-1')],
+          errors: [],
+        })) as never,
+      },
+    });
+    act(() => hook.current().addDraftComment(viewerComment));
+    act(() =>
+      hook.current().addDraftComment({ ...viewerComment, id: 'comment-2', text: 'Round this edge' })
+    );
+    act(() => hook.current().setDraftText('Please apply both changes.'));
+    await act(async () => {
+      await hook.current().addDraftFiles([new File(['one'], 'ref.png', { type: 'image/png' })]);
+    });
+    await act(async () => hook.current().submitDraft());
+    const message = hook.current().messages[0] as UserMessage;
+    expect(message.parts.map((part) => part.type)).toEqual(['text', 'image', 'comment', 'comment']);
+    expect(message.parts[2]).toEqual({ type: 'comment', comment: viewerComment });
+  });
+
+  it('restores comments after an initial request failure and preserves them when retrying', async () => {
+    storeApiKey('anthropic', 'test-key');
+    let fail = true;
+    const hook = createHarness({
+      testOverrides: {
+        availableProviders: ['anthropic'],
+        createModel: (() => ({})) as never,
+        buildTools: (() => ({})) as never,
+        startAiStream: (async () => {
+          if (fail) throw new Error('Failed to fetch');
+          return createStreamResult([]);
+        }) as never,
+      },
+    });
+    act(() => hook.current().addDraftComment(viewerComment));
+    await act(async () => hook.current().submitDraft());
+    expect(hook.current().draft.comments).toEqual([viewerComment]);
+    fail = false;
+    await act(async () => hook.current().submitDraft());
+    const userMessages = hook.current().messages.filter((message) => message.type === 'user');
+    expect(userMessages.at(-1)?.parts).toEqual([{ type: 'comment', comment: viewerComment }]);
+    expect(hook.current().draft.comments).toBeUndefined();
+    act(() => hook.current().addDraftComment(viewerComment));
+    act(() => hook.current().clearDraft());
+    expect(hook.current().canSubmitDraft).toBe(false);
   });
 
   it('prepends annotation guidance when submitting viewer annotation attachments', async () => {
@@ -1164,8 +1289,10 @@ describe('useAiAgent', () => {
       },
     });
 
+    act(() => hook.current().addDraftComment(viewerComment));
+    act(() => hook.current().setDraftText('Start rendering'));
     act(() => {
-      void hook.current().submitPrompt('Start rendering');
+      void hook.current().submitDraft();
     });
 
     await waitFor(() => {
@@ -1184,6 +1311,10 @@ describe('useAiAgent', () => {
       type: 'assistant',
       content: 'Working',
       state: 'cancelled',
+    });
+    expect((hook.current().messages[0] as UserMessage).parts).toContainEqual({
+      type: 'comment',
+      comment: viewerComment,
     });
     expect(analytics.track).toHaveBeenCalledWith(
       'ai request cancelled',

@@ -35,7 +35,7 @@ export interface SvgViewportState {
   interactionSource: 'initial' | 'resize' | 'toolbar' | 'wheel' | 'pan' | 'keyboard';
 }
 
-export type ViewMode = 'pan' | 'measure-distance' | 'annotate';
+export type ViewMode = 'pan' | 'measure-distance' | 'annotate' | 'comment';
 
 export interface ViewerOverlaySettings {
   showAxes: boolean;

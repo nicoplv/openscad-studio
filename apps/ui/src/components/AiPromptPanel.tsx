@@ -1,8 +1,10 @@
 import { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
 import { ChatImage, ChatImageGrid } from './ChatImage';
+import { CommentCard } from './viewer-comment/CommentCard';
 import { Button } from './ui';
 import { MarkdownMessage } from './MarkdownMessage';
 import { ModelSelector } from './ModelSelector';
+import { AiContextReadout } from './AiContextReadout';
 import { AiComposer, type AiComposerRef } from './AiComposer';
 import { AiAccessEmptyState } from './AiAccessEmptyState';
 import { useAnalytics, type ModelSelectionSurface } from '../analytics/runtime';
@@ -12,6 +14,7 @@ import { useHasApiKey } from '../stores/apiKeyStore';
 import type { AiProvider } from '../stores/apiKeyStore';
 import { notifyError, notifySuccess } from '../utils/notifications';
 import type {
+  AiContextUsage,
   AiDraft,
   AssistantMessage,
   AttachmentStore,
@@ -336,6 +339,7 @@ export interface AiPromptPanelProps {
   onTextChange: (text: string) => void;
   onFilesSelected: (files: File[]) => void;
   onRemoveAttachment: (attachmentId: string) => void;
+  onRemoveComment?: (commentId: string) => void;
   draft: AiDraft;
   attachments: AttachmentStore;
   draftErrors: string[];
@@ -351,6 +355,7 @@ export interface AiPromptPanelProps {
   currentToolCalls?: ToolCall[];
   currentProvider?: AiProvider;
   currentModel?: string;
+  lastContextUsage?: AiContextUsage | null;
   availableProviders?: AiProvider[];
   onModelChange?: (
     model: string,
@@ -372,6 +377,7 @@ export const AiPromptPanel = forwardRef<AiPromptPanelRef, AiPromptPanelProps>(
       onTextChange,
       onFilesSelected,
       onRemoveAttachment,
+      onRemoveComment,
       draft,
       attachments,
       draftErrors,
@@ -387,6 +393,7 @@ export const AiPromptPanel = forwardRef<AiPromptPanelRef, AiPromptPanelProps>(
       currentToolCalls = [],
       currentProvider,
       currentModel = 'claude-sonnet-4-5',
+      lastContextUsage = null,
       availableProviders = [],
       onModelChange,
       onRestoreCheckpoint,
@@ -622,6 +629,7 @@ export const AiPromptPanel = forwardRef<AiPromptPanelRef, AiPromptPanelProps>(
               if (message.type === 'user') {
                 const userText = getUserMessageText(message);
                 const imageParts = message.parts.filter((part) => part.type === 'image');
+                const commentParts = message.parts.filter((part) => part.type === 'comment');
 
                 return (
                   <div key={message.id} className="space-y-1">
@@ -638,6 +646,13 @@ export const AiPromptPanel = forwardRef<AiPromptPanelRef, AiPromptPanelProps>(
                         </div>
                         {userText ? (
                           <div className="text-sm whitespace-pre-wrap font-mono">{userText}</div>
+                        ) : null}
+                        {commentParts.length > 0 ? (
+                          <div className="mt-2 grid gap-2">
+                            {commentParts.map((part) => (
+                              <CommentCard key={part.comment.id} comment={part.comment} />
+                            ))}
+                          </div>
                         ) : null}
                         {imageParts.length > 0 && (
                           <ChatImageGrid
@@ -831,18 +846,24 @@ export const AiPromptPanel = forwardRef<AiPromptPanelRef, AiPromptPanelProps>(
             submitLabel="Send"
             submitTitle="Send (Enter). Shift+Enter adds a newline."
             trailingControls={
-              <ModelSelector
-                currentModel={currentModel}
-                currentProvider={currentProvider}
-                availableProviders={availableProviders}
-                onChange={(model, provider) => onModelChange?.(model, 'ai_panel', provider)}
-                disabled={isStreaming}
-                compact
-              />
+              <>
+                <ModelSelector
+                  currentModel={currentModel}
+                  currentProvider={currentProvider}
+                  availableProviders={availableProviders}
+                  onChange={(model, provider) => onModelChange?.(model, 'ai_panel', provider)}
+                  disabled={isStreaming}
+                  compact
+                />
+                {currentProvider === 'openai-compatible' && (
+                  <AiContextReadout modelId={currentModel} usage={lastContextUsage} />
+                )}
+              </>
             }
             onTextChange={onTextChange}
             onFilesSelected={onFilesSelected}
             onRemoveAttachment={onRemoveAttachment}
+            onRemoveComment={onRemoveComment}
             onSubmit={onSubmit}
             onCancel={onCancel}
           />

@@ -21,6 +21,10 @@ export interface PreviewScreenshotOptions {
   elevation?: number;
 }
 
+export type PreviewScreenshotResult =
+  | { image_data_url: string; __previewKind: '2d' | '3d' }
+  | { error: string };
+
 /**
  * List files and subfolders at a specific directory level.
  * Returns a formatted string with entries like:
@@ -108,13 +112,14 @@ export async function capturePreviewScreenshot({
   view = 'current',
   azimuth,
   elevation,
-}: PreviewScreenshotOptions): Promise<{ image_data_url?: string; error?: string }> {
+}: PreviewScreenshotOptions): Promise<PreviewScreenshotResult> {
   const useOffscreen = view !== 'current' || azimuth !== undefined || elevation !== undefined;
 
   if (!useOffscreen) {
+    const previewKind = get3dPreviewUrl() ? '3d' : '2d';
     const dataUrl = await captureCurrentView();
     if (dataUrl) {
-      return { image_data_url: dataUrl };
+      return { image_data_url: dataUrl, __previewKind: previewKind };
     }
     return {
       error:
@@ -141,7 +146,7 @@ export async function capturePreviewScreenshot({
     opts.sceneStyle = getPreviewSceneStyle();
     opts.useModelColors = getUseModelColors();
     const dataUrl = await captureOffscreen(preview3dUrl, opts);
-    return { image_data_url: dataUrl };
+    return { image_data_url: dataUrl, __previewKind: '3d' };
   } catch (err) {
     return {
       error: `Failed to capture screenshot: ${err instanceof Error ? err.message : String(err)}`,

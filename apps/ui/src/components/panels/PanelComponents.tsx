@@ -61,18 +61,22 @@ const PreviewPanel: React.FC<IDockviewPanelProps> = () => {
   const {
     previewSrc,
     previewKind,
+    previewCommentContext,
     isRendering,
     error,
     onPreviewVisualReady,
     hasCurrentModelApiKey,
     canAttachViewerAnnotation,
     attachViewerAnnotationFile,
+    attachViewerComment,
   } = useWorkspace();
   return (
     <PanelErrorBoundary panelId="preview" panelName="Preview">
       <Preview
         src={previewSrc}
         kind={previewKind}
+        commentContext={previewCommentContext}
+        onAttachComment={attachViewerComment}
         isRendering={isRendering}
         error={error}
         viewerId={MAIN_PREVIEW_VIEWER_ID}
@@ -97,6 +101,7 @@ const AiChatPanel: React.FC<IDockviewPanelProps> = () => {
           void ws.addDraftFiles(files, 'ai_panel');
         }}
         onRemoveAttachment={(attachmentId) => ws.removeDraftAttachment(attachmentId, 'ai_panel')}
+        onRemoveComment={ws.removeDraftComment}
         draft={ws.draft}
         attachments={ws.attachments}
         draftErrors={ws.draftErrors}
@@ -112,6 +117,7 @@ const AiChatPanel: React.FC<IDockviewPanelProps> = () => {
         currentToolCalls={ws.currentToolCalls}
         currentProvider={ws.currentProvider}
         currentModel={ws.currentModel}
+        lastContextUsage={ws.lastContextUsage}
         availableProviders={ws.availableProviders}
         onModelChange={ws.setCurrentModel}
         onRestoreCheckpoint={ws.handleRestoreCheckpoint}

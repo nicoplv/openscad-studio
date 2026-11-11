@@ -11,6 +11,9 @@ function getViewerTool(mode: ViewMode): ViewerTool {
   if (mode === 'annotate') {
     return 'annotate';
   }
+  if (mode === 'comment') {
+    return 'comment';
+  }
   return 'pan';
 }
 

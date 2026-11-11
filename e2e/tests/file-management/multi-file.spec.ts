@@ -1,19 +1,9 @@
 import { test, expect } from '../../fixtures/app.fixture';
 import { setMonacoValue, getMonacoValue } from '../../helpers/editor';
 
-/**
- * Ensure the file tree sidebar is visible.
- */
-async function ensureFileTreeVisible(page: import('@playwright/test').Page) {
-  const newFileBtn = page.locator('button[title="New file"]');
-  if (!(await newFileBtn.isVisible({ timeout: 1000 }).catch(() => false))) {
-    // File tree is collapsed — expand it
-    const expandBtn = page.locator('button[title="Show file tree"]');
-    if (await expandBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await expandBtn.click();
-      await page.waitForTimeout(300);
-    }
-  }
+async function createFileFromContextMenu(page: import('@playwright/test').Page) {
+  await page.getByTestId('file-tree-root').click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'New File' }).click();
 }
 
 test.describe('Multi-file project', () => {
@@ -21,14 +11,12 @@ test.describe('Multi-file project', () => {
 
   test('new file appears in file tree and can be switched to', async ({ app }) => {
     await app.waitForRender();
-    await ensureFileTreeVisible(app.page);
 
     // The default project has main.scad
     const fileTreePanel = app.page.locator('button[title="main.scad"]');
     await expect(fileTreePanel).toBeVisible();
 
-    // Click "New file" button in file tree header
-    await app.page.locator('button[title="New file"]').click();
+    await createFileFromContextMenu(app.page);
     await app.page.waitForTimeout(500);
 
     // A rename input should appear for the new file
@@ -49,7 +37,7 @@ test.describe('Multi-file project', () => {
     await app.page.waitForTimeout(300);
 
     // Switch back to main.scad via file tree
-    await app.page.locator('button[title="main.scad"]').click();
+    await app.page.locator('button[title="main.scad"]').dblclick();
     await app.page.waitForTimeout(500);
 
     // Editor should show main.scad content
@@ -57,7 +45,7 @@ test.describe('Multi-file project', () => {
     expect(mainContent).toContain('cube');
 
     // Switch to helper.scad and verify its content persists
-    await helperBtn.click();
+    await helperBtn.dblclick();
     await app.page.waitForTimeout(500);
     const helperContent = await getMonacoValue(app.page);
     expect(helperContent).toContain('my_helper');
@@ -65,10 +53,9 @@ test.describe('Multi-file project', () => {
 
   test('render target stays on main.scad when editing another file', async ({ app }) => {
     await app.waitForRender();
-    await ensureFileTreeVisible(app.page);
 
-    // Add a secondary file via the "New file" button
-    await app.page.locator('button[title="New file"]').click();
+    // Add a secondary file from the Files panel context menu
+    await createFileFromContextMenu(app.page);
     await app.page.waitForTimeout(500);
     const renameInput = app.page.getByTestId('rename-input');
     await renameInput.fill('utils.scad');
@@ -95,12 +82,11 @@ test.describe('Multi-file project', () => {
     await expect(app.previewCanvas3D).toBeVisible();
   });
 
-  test('set render target via context menu', async ({ app }) => {
+  test('single click selects the render target and refreshes the preview', async ({ app }) => {
     await app.waitForRender();
-    await ensureFileTreeVisible(app.page);
 
     // Create a second file
-    await app.page.locator('button[title="New file"]').click();
+    await createFileFromContextMenu(app.page);
     await app.page.waitForTimeout(500);
     const renameInput = app.page.getByTestId('rename-input');
     await renameInput.fill('alt.scad');
@@ -114,15 +100,9 @@ test.describe('Multi-file project', () => {
     await setMonacoValue(app.page, 'sphere(10);');
     await app.page.waitForTimeout(300);
 
-    // Right-click alt.scad to open context menu
-    await altBtn.click({ button: 'right' });
-    await app.page.waitForTimeout(300);
-
-    // Click "Set as Render Target"
-    const menuItem = app.page.getByText('Set as Render Target');
-    await expect(menuItem).toBeVisible();
-    await menuItem.click();
-    await app.page.waitForTimeout(500);
+    // A single click selects alt.scad as the render target and renders it.
+    await altBtn.click();
+    await app.waitForRender();
 
     // alt.scad should now show the render target icon
     const altRenderTarget = altBtn.locator('[title="Render target"]');
@@ -136,10 +116,9 @@ test.describe('Multi-file project', () => {
 
   test('delete file via context menu', async ({ app }) => {
     await app.waitForRender();
-    await ensureFileTreeVisible(app.page);
 
     // Create a file to delete
-    await app.page.locator('button[title="New file"]').click();
+    await createFileFromContextMenu(app.page);
     await app.page.waitForTimeout(500);
     const renameInput = app.page.getByTestId('rename-input');
     await renameInput.fill('temp.scad');
@@ -169,10 +148,9 @@ test.describe('Multi-file project', () => {
 
   test('rename file via context menu', async ({ app }) => {
     await app.waitForRender();
-    await ensureFileTreeVisible(app.page);
 
     // Create a file to rename
-    await app.page.locator('button[title="New file"]').click();
+    await createFileFromContextMenu(app.page);
     await app.page.waitForTimeout(500);
     const renameInput = app.page.getByTestId('rename-input');
     await renameInput.fill('old_name.scad');
@@ -202,10 +180,9 @@ test.describe('Multi-file project', () => {
 
   test('multi-file include resolution works', async ({ app }) => {
     await app.waitForRender();
-    await ensureFileTreeVisible(app.page);
 
     // Create a helper file
-    await app.page.locator('button[title="New file"]').click();
+    await createFileFromContextMenu(app.page);
     await app.page.waitForTimeout(500);
     const renameInput = app.page.getByTestId('rename-input');
     await renameInput.fill('shapes.scad');
@@ -217,7 +194,7 @@ test.describe('Multi-file project', () => {
     await app.page.waitForTimeout(300);
 
     // Switch to main.scad and use the module
-    await app.page.locator('button[title="main.scad"]').click();
+    await app.page.locator('button[title="main.scad"]').dblclick();
     await app.page.waitForTimeout(500);
     await setMonacoValue(app.page, 'use <shapes.scad>\nmy_sphere();');
     await app.page.waitForTimeout(300);
@@ -232,10 +209,9 @@ test.describe('Multi-file project', () => {
 
   test('saving a nested file preserves its folder structure', async ({ app }) => {
     await app.waitForRender();
-    await ensureFileTreeVisible(app.page);
 
     // Create a file inside a subfolder by typing a path with slash
-    await app.page.locator('button[title="New file"]').click();
+    await createFileFromContextMenu(app.page);
     await app.page.waitForTimeout(500);
     const renameInput = app.page.getByTestId('rename-input');
     await renameInput.fill('lib/shapes.scad');
@@ -259,12 +235,12 @@ test.describe('Multi-file project', () => {
     await app.page.waitForTimeout(500);
 
     // Switch to main.scad, then back to the nested file
-    await app.page.locator('button[title="main.scad"]').click();
+    await app.page.locator('button[title="main.scad"]').dblclick();
     await app.page.waitForTimeout(500);
 
     // The nested file should still be under "lib" — not moved to root
     await expect(shapesBtn).toBeVisible();
-    await shapesBtn.click();
+    await shapesBtn.dblclick();
     await app.page.waitForTimeout(500);
 
     // Content should persist after save + tab switch
@@ -272,7 +248,7 @@ test.describe('Multi-file project', () => {
     expect(content).toContain('my_shape');
 
     // Verify include resolution still works from main.scad
-    await app.page.locator('button[title="main.scad"]').click();
+    await app.page.locator('button[title="main.scad"]').dblclick();
     await app.page.waitForTimeout(500);
     await setMonacoValue(app.page, 'use <lib/shapes.scad>\nmy_shape();');
     await app.page.waitForTimeout(300);

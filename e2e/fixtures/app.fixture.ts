@@ -310,36 +310,6 @@ export class AppHelper {
     await this.page.waitForTimeout(200);
   }
 
-  // -- Welcome Screen -------------------------------------------------------
-
-  /** Dismiss the welcome screen if it's showing */
-  async dismissWelcomeScreen() {
-    const welcomeScreen = this.page.getByTestId('welcome-screen');
-    const welcomeVisible = await welcomeScreen.isVisible({ timeout: 2_000 }).catch(() => false);
-    if (!welcomeVisible) {
-      return;
-    }
-
-    const startButton = this.page
-      .getByTestId('welcome-start-empty-project')
-      .or(this.page.getByRole('button', { name: /Start (with empty project|in folder)/i }))
-      .first();
-
-    if (await startButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await startButton.click();
-    }
-
-    await Promise.race([
-      welcomeScreen.waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => {}),
-      this.page
-        .locator('.dv-tab')
-        .first()
-        .waitFor({ state: 'visible', timeout: 10_000 })
-        .catch(() => {}),
-    ]);
-    await this.page.waitForTimeout(500);
-  }
-
   // -- NUX (legacy first-run layout picker) ----------------------------------
 
   /** Dismiss the NUX layout picker if shown */
@@ -365,7 +335,6 @@ export class AppHelper {
   /** Ensure editor-focused tests start with Monaco visible */
   async openEditorPanel() {
     await this.dismissNux();
-    await this.dismissWelcomeScreen();
 
     if (await this.editorContainer.isVisible({ timeout: 1_000 }).catch(() => false)) {
       return;
@@ -391,7 +360,6 @@ export class AppHelper {
 
   async openAiPanel() {
     await this.dismissNux();
-    await this.dismissWelcomeScreen();
     const aiTab = this.page.locator('.dv-tab').filter({ hasText: 'AI' });
     await aiTab.click();
     await this.page.waitForTimeout(300);
@@ -410,7 +378,6 @@ export class AppHelper {
     await this.page.reload();
     await this.page.waitForLoadState('domcontentloaded');
     await this.dismissNux();
-    await this.dismissWelcomeScreen();
     await this.page.waitForTimeout(500);
   }
 
@@ -518,8 +485,6 @@ export const test = base.extend<AppFixtures>({
 
       const app = new AppHelper(page, isTauri);
 
-      // Dismiss first-run overlays
-      await app.dismissWelcomeScreen();
       await app.openEditorPanel();
 
       // Wait for Monaco editor to be available

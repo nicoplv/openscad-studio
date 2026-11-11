@@ -37,4 +37,13 @@ describe('settingsStore', () => {
     expect(settings.mcp.enabled).toBe(true);
     expect(settings.mcp.port).toBe(32123);
   });
+
+  it('migrates legacy workspace presets to AI-first', () => {
+    localStorage.setItem(
+      'openscad-studio-settings',
+      JSON.stringify({ ui: { defaultLayoutPreset: 'customizer-first' } })
+    );
+
+    expect(loadSettings().ui.defaultLayoutPreset).toBe('ai-first');
+  });
 });

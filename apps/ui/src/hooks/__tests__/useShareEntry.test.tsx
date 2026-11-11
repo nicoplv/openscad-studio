@@ -52,7 +52,7 @@ describe('useShareEntry', () => {
       error: '',
       dimensionMode: '3d',
     });
-    window.__SHARE_CONTEXT = { shareId: 'abc12345', mode: 'customizer-first' };
+    window.__SHARE_CONTEXT = { shareId: 'abc12345' };
     window.history.replaceState({}, '', '/s/abc12345');
     resetShareEntryStore(window.__SHARE_CONTEXT);
   });

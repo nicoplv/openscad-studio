@@ -15,12 +15,13 @@ function FileIcon({ name }: { name: string }) {
 interface FileTreeItemProps {
   name: string;
   fullPath: string;
-  isActive: boolean;
+  isSelected: boolean;
   isDirty: boolean;
   isRenderTarget: boolean;
   pendingRename?: boolean;
   isDragging?: boolean;
   onClick: () => void;
+  onDoubleClick: () => void;
   onRename: (oldPath: string, newName: string) => void;
   onDelete: (path: string) => void;
   onSetRenderTarget: (path: string) => void;
@@ -34,12 +35,13 @@ interface FileTreeItemProps {
 export function FileTreeItem({
   name,
   fullPath,
-  isActive,
+  isSelected,
   isDirty,
   isRenderTarget,
   pendingRename,
   isDragging,
   onClick,
+  onDoubleClick,
   onRename,
   onDelete,
   onSetRenderTarget,
@@ -125,7 +127,9 @@ export function FileTreeItem({
         {/* eslint-disable-next-line no-restricted-syntax -- tree item row with custom layout; not a standard action button */}
         <button
           draggable={true}
+          aria-current={isSelected ? 'true' : undefined}
           onClick={onClick}
+          onDoubleClick={onDoubleClick}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
@@ -140,8 +144,8 @@ export function FileTreeItem({
           onDragEnd={() => onDragEnd?.()}
           className="w-full flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors text-left group"
           style={{
-            backgroundColor: isActive ? 'var(--bg-tertiary)' : 'transparent',
-            color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
+            backgroundColor: isSelected ? 'var(--bg-tertiary)' : 'transparent',
+            color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)',
             opacity: isDragging ? 0.4 : 1,
           }}
           title={name}
@@ -213,6 +217,19 @@ export function FileTreeItem({
               style={{ height: '1px', backgroundColor: 'var(--border-subtle)', margin: '4px 0' }}
             />
           )}
+          <ContextMenu.Item
+            className="flex items-center px-3 py-1.5 text-xs rounded cursor-pointer outline-none"
+            style={{ color: 'var(--text-secondary)' }}
+            onSelect={onDoubleClick}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+          >
+            Open in Editor
+          </ContextMenu.Item>
           {!isRenderTarget && (
             <ContextMenu.Item
               className="flex items-center px-3 py-1.5 text-xs rounded cursor-pointer outline-none"

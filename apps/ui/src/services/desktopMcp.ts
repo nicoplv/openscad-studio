@@ -13,7 +13,6 @@ import {
 import { getPlatform } from '../platform';
 import { loadSettings } from '../stores/settingsStore';
 import { requestRender } from '../stores/renderRequestStore';
-import { getWorkspaceState } from '../stores/workspaceStore';
 import { normalizeProjectRelativePath } from '../utils/projectFilePaths';
 import {
   resolveWorkingDirDeps,
@@ -960,7 +959,6 @@ export async function initializeDesktopMcpBridge(
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       const currentWindow = getCurrentWindow();
       let unlistenOpenRequest: (() => void) | null = null;
-      let unlistenFocus: (() => void) | null = null;
 
       const unlistenToolRequest = await currentWindow.listen<McpToolRequestPayload>(
         'mcp:tool-request',
@@ -990,32 +988,11 @@ export async function initializeDesktopMcpBridge(
         }
       );
 
-      unlistenFocus = await currentWindow.onFocusChanged(() => {
-        void syncDesktopMcpWindowContext({
-          title: document.title || 'OpenSCAD Studio',
-          workspaceRoot: getProjectState().projectRoot,
-          renderTargetPath: getProjectState().renderTargetPath,
-          showWelcome: getWorkspaceState().showWelcome,
-          mode: getWorkspaceState().showWelcome ? 'welcome' : 'ready',
-        });
-      });
-
       await invoke('mcp_mark_window_bridge_ready');
-
-      void syncDesktopMcpWindowContext({
-        title: document.title || 'OpenSCAD Studio',
-        workspaceRoot: getProjectState().projectRoot,
-        renderTargetPath: getProjectState().renderTargetPath,
-        showWelcome: getWorkspaceState().showWelcome,
-        mode: getWorkspaceState().showWelcome ? 'welcome' : 'ready',
-      }).catch((error) => {
-        console.error('[desktopMcp] Initial syncDesktopMcpWindowContext failed:', error);
-      });
 
       return () => {
         unlistenToolRequest();
         unlistenOpenRequest?.();
-        unlistenFocus?.();
       };
     })();
   }

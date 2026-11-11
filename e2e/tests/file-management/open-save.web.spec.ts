@@ -27,7 +27,7 @@ test.describe('File operations (web)', () => {
     });
   }
 
-  test('save triggers download', async ({ app }) => {
+  test('save downloads a project archive', async ({ app }) => {
     await setMonacoValue(app.page, 'cube([5, 5, 5]);');
     // Let Monaco's onChange propagate to React state
     await app.page.waitForTimeout(500);
@@ -59,7 +59,7 @@ test.describe('File operations (web)', () => {
 
     // Click File > Save As from the menu (more reliable than Meta+S keybinding)
     await app.page.getByText('File').first().click();
-    await app.page.getByText('Save As').click();
+    await app.page.getByText('Save Project As...').click();
 
     // Wait for the download intercept to fire
     await app.page.waitForFunction(() => (window as any).__downloadCalled__ !== null, {
@@ -67,7 +67,7 @@ test.describe('File operations (web)', () => {
     });
 
     const result = await app.page.evaluate(() => (window as any).__downloadCalled__);
-    expect(result.filename).toMatch(/\.scad$/);
+    expect(result.filename).toMatch(/\.oscadstudio$/);
     expect(result.href).toContain('blob:');
   });
 
@@ -97,19 +97,12 @@ test.describe('File operations (web)', () => {
   test('folder upload keeps .h project files and renders successfully', async ({ app }) => {
     test.setTimeout(60_000);
 
-    const folderPath = path.join(
-      __dirname,
-      '..',
-      '..',
-      'fixtures',
-      'test-data',
-      'header-project'
-    );
+    const folderPath = path.join(__dirname, '..', '..', 'fixtures', 'test-data', 'header-project');
 
     const fileChooserPromise = app.page.waitForEvent('filechooser', { timeout: 10_000 });
 
     await app.page.getByText('File').first().click();
-    await app.page.getByText('Open Folder...').click();
+    await app.page.getByText('Import Folder...').click();
 
     const fileChooser = await fileChooserPromise;
     await fileChooser.setFiles(folderPath);

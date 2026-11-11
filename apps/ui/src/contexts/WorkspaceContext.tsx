@@ -37,6 +37,17 @@ export interface WorkspaceState {
   onNewTab: () => void;
   onReorderTabs: (tabs: WorkspaceTab[]) => void;
 
+  // Files
+  onFileDoubleClick: (path: string) => void;
+  onRenameFile: (oldPath: string, newName: string) => void;
+  onDeleteFile: (path: string) => void;
+  onDeleteFolder: (path: string) => void;
+  onSetRenderTarget: (path: string) => void;
+  onCreateFile: (parentDir: string) => Promise<string>;
+  onCreateFolder: (parentDir: string, folderName: string) => Promise<void>;
+  onMoveItem: (sourcePath: string, destFolderPath: string, isFolder: boolean) => void;
+  onAddExternalFiles: (files: Record<string, string>, targetFolderPath: string) => void;
+
   // Preview
   previewSrc: string;
   previewKind: RenderKind;
@@ -83,19 +94,22 @@ export interface WorkspaceState {
   rejectDiff: () => void;
   clearAiError: () => void;
   newConversation: () => void;
+  selectConversation: (id: string) => void;
+  conversationList: { id: string; title: string }[];
+  currentConversationId: string | null;
+  interrupted: boolean;
   setCurrentModel: (
     model: string,
     sourceSurface?: ModelSelectionSurface,
     provider?: AiProvider
   ) => void;
-  handleRestoreCheckpoint: (checkpointId: string, truncatedMessages: Message[]) => void;
+  handleRestoreCheckpoint: (checkpointId: string, truncatedMessages: Message[]) => boolean;
   aiPromptPanelRef: React.RefObject<AiPromptPanelRef | null>;
 
   onAcceptDiff: () => void;
   onRejectDiff: () => void;
   onOpenAiSettings: () => void;
   onOpenCustomizerAiRefine: () => void;
-  onOpenEditorPanel: () => void;
   onOpenExportDialog: () => void;
 }
 

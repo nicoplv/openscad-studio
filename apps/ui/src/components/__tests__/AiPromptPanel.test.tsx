@@ -32,8 +32,9 @@ jest.unstable_mockModule('@/components/AiAccessEmptyState', () => ({
   AiAccessEmptyState: () => <div data-testid="ai-access-empty-state" />,
 }));
 
+let hasApiKey = true;
 jest.unstable_mockModule('@/stores/apiKeyStore', () => ({
-  useHasApiKey: () => true,
+  useHasApiKey: () => hasApiKey,
   getOpenAiCompatibleConfig: () => ({ baseUrl: '', modelId: '', apiKey: null }),
 }));
 
@@ -163,8 +164,55 @@ function installScrollMetrics(
 }
 
 describe('AiPromptPanel', () => {
+  it('shows the transcript and conversation picker without a configured AI provider', () => {
+    hasApiKey = false;
+    try {
+      renderWithProviders(
+        <AiPromptPanel
+          {...createBaseProps({
+            messages: [createUserMessage()],
+            onNewConversation: () => {},
+            activeConversationId: 'current',
+            conversations: [
+              { id: 'current', title: 'Current' },
+              { id: 'previous', title: 'Previous' },
+            ],
+            onSelectConversation: () => {},
+          })}
+        />
+      );
+      expect(screen.getByText('Inspect the project files.')).toBeTruthy();
+      expect(screen.getByRole('combobox', { name: 'AI conversation' })).toBeTruthy();
+      expect(screen.queryByTestId('ai-composer')).toBeNull();
+      expect(screen.getByText('Configure AI to continue')).toBeTruthy();
+    } finally {
+      hasApiKey = true;
+    }
+  });
+
   beforeAll(async () => {
     ({ AiPromptPanel } = await import('@/components/AiPromptPanel'));
+  });
+
+  it('always shows the current session selector beside a new session action', () => {
+    const onNewConversation = jest.fn();
+
+    renderWithProviders(
+      <AiPromptPanel
+        {...createBaseProps({
+          onNewConversation,
+          activeConversationId: 'current',
+          conversations: [{ id: 'current', title: 'Current session' }],
+          onSelectConversation: () => {},
+        })}
+      />
+    );
+
+    expect(screen.getByRole('combobox', { name: 'AI conversation' })).toBeTruthy();
+    expect(screen.getByText('Current session')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /New session/ }));
+    expect(onNewConversation).toHaveBeenCalledTimes(1);
   });
 
   it('displays a submitted comment object in the conversation', () => {

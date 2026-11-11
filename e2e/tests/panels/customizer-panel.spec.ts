@@ -11,26 +11,6 @@ test.describe('Customizer Panel', () => {
     await page.waitForTimeout(500);
   }
 
-  async function useCustomizerFirstLayout(app: import('../../fixtures/app.fixture').AppHelper) {
-    await app.page.evaluate(() => {
-      localStorage.setItem(
-        'openscad-studio-settings',
-        JSON.stringify({
-          ui: {
-            hasCompletedNux: true,
-            defaultLayoutPreset: 'customizer-first',
-          },
-        })
-      );
-    });
-
-    await app.page.reload();
-    await app.page.waitForLoadState('domcontentloaded');
-    await app.dismissNux();
-    await app.dismissWelcomeScreen();
-    await app.waitForRender();
-  }
-
   test('shows the empty-state guidance for simple code', async ({ app }) => {
     await ensureCustomizerVisible(app.page);
     await setMonacoValue(app.page, 'cube(10);');
@@ -120,8 +100,8 @@ test.describe('Customizer Panel', () => {
     await expect(app.page.getByTestId('customizer-refine-button')).toBeVisible({ timeout: 5_000 });
   });
 
-  test('supports the customizer-first layout actions', async ({ app }) => {
-    await useCustomizerFirstLayout(app);
+  test('supports customizer actions from its dock panel', async ({ app }) => {
+    await ensureCustomizerVisible(app.page);
 
     await expect(app.page.getByTestId('customizer-empty-state')).toBeVisible({ timeout: 10_000 });
     await expect(app.page.getByTestId('customizer-refine-button')).toBeVisible({ timeout: 5_000 });

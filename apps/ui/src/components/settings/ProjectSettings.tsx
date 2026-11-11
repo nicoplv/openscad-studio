@@ -1,4 +1,3 @@
-import { useState, useEffect } from 'react';
 import {
   Button,
   Label,
@@ -32,17 +31,7 @@ export function ProjectSettings({
   onProjectChange,
 }: ProjectSettingsProps) {
   const { capabilities } = getPlatform();
-  const [resolvedDefault, setResolvedDefault] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (capabilities.hasFileSystem && !settings.project.defaultProjectDirectory) {
-      void getPlatform()
-        .getDefaultProjectsDirectory()
-        .then((dir) => setResolvedDefault(dir));
-    }
-  }, [capabilities.hasFileSystem, settings.project.defaultProjectDirectory]);
-
-  const displayPath = settings.project.defaultProjectDirectory || resolvedDefault || '';
+  const displayPath = settings.project.defaultProjectDirectory || 'System default';
 
   const handlePickDirectory = async () => {
     const platform = getPlatform();
@@ -62,7 +51,7 @@ export function ProjectSettings({
         <SettingsCard>
           <SettingsCardHeader
             title="Default Project Directory"
-            description="New projects will be created in this folder. Each project gets its own subdirectory."
+            description="Starting location for the Save Project dialog."
           />
           <SettingsCardSection className="flex flex-col" style={{ gap: 'var(--space-label-gap)' }}>
             <div className="flex items-center gap-2">
@@ -76,7 +65,7 @@ export function ProjectSettings({
                 title={displayPath}
               >
                 <TbFolder className="inline mr-2 -mt-0.5" size={14} />
-                {displayPath || 'Not set'}
+                {displayPath}
               </div>
               <Button
                 variant="secondary"

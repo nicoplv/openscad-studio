@@ -1,6 +1,7 @@
 mod cmd;
 mod history;
 mod mcp;
+mod project_archive;
 mod types;
 
 use cmd::{update_editor_state, update_working_dir, EditorState, OpenScadBinaryState};
@@ -112,6 +113,7 @@ pub fn run() {
             mcp::mcp_report_window_startup_phase,
             mcp::report_window_open_result,
             mcp::mcp_update_window_context,
+            project_archive::write_project_archive,
         ])
         .setup(|app| {
             // Create app menu (About, Hide, Quit, etc.)
@@ -128,37 +130,41 @@ pub fn run() {
             // Create File menu
             let file_menu = SubmenuBuilder::new(app, "File")
                 .item(
-                    &MenuItemBuilder::with_id("new", "New")
+                    &MenuItemBuilder::with_id("new", "New Project")
                         .accelerator("CmdOrCtrl+N")
                         .build(app)?,
                 )
+                .item(&MenuItemBuilder::with_id("new_file", "New File").build(app)?)
                 .item(
                     &MenuItemBuilder::with_id("new_window", "New Window")
                         .accelerator("CmdOrCtrl+Shift+N")
                         .build(app)?,
                 )
                 .item(
-                    &MenuItemBuilder::with_id("open", "Open...")
+                    &MenuItemBuilder::with_id("open_project", "Open Project...")
+                        .accelerator("CmdOrCtrl+Shift+O")
+                        .build(app)?,
+                )
+                .item(
+                    &MenuItemBuilder::with_id("open", "Open File...")
                         .accelerator("CmdOrCtrl+O")
                         .build(app)?,
                 )
-                .item(&MenuItemBuilder::with_id("open_folder", "Open Folder...").build(app)?)
+                .item(&MenuItemBuilder::with_id("open_folder", "Import Folder...").build(app)?)
                 .separator()
                 .item(
-                    &MenuItemBuilder::with_id("save", "Save")
+                    &MenuItemBuilder::with_id("save", "Save Project")
                         .accelerator("CmdOrCtrl+S")
                         .build(app)?,
                 )
                 .item(
-                    &MenuItemBuilder::with_id("save_as", "Save As...")
+                    &MenuItemBuilder::with_id("save_as", "Save Project As...")
                         .accelerator("CmdOrCtrl+Shift+S")
                         .build(app)?,
                 )
-                .item(
-                    &MenuItemBuilder::with_id("save_all", "Save All")
-                        .accelerator("CmdOrCtrl+Alt+S")
-                        .build(app)?,
-                )
+                .separator()
+                .item(&MenuItemBuilder::with_id("export_source", "Export File...").build(app)?)
+                .item(&MenuItemBuilder::with_id("export_all", "Export All...").build(app)?)
                 .separator()
                 .item(&MenuItemBuilder::with_id("export_stl", "Export as STL...").build(app)?)
                 .item(&MenuItemBuilder::with_id("export_obj", "Export as OBJ...").build(app)?)
@@ -181,10 +187,25 @@ pub fn run() {
                 .select_all()
                 .build()?;
 
+            let window_menu = SubmenuBuilder::new(app, "Window")
+                .item(&MenuItemBuilder::with_id("window_ai", "AI").build(app)?)
+                .item(&MenuItemBuilder::with_id("window_editor", "Editor").build(app)?)
+                .item(&MenuItemBuilder::with_id("window_preview", "Preview").build(app)?)
+                .item(&MenuItemBuilder::with_id("window_customizer", "Customizer").build(app)?)
+                .item(&MenuItemBuilder::with_id("window_console", "Console").build(app)?)
+                .item(&MenuItemBuilder::with_id("window_files", "Files").build(app)?)
+                .separator()
+                .item(
+                    &MenuItemBuilder::with_id("window_reset_workspace", "Reset workspace")
+                        .build(app)?,
+                )
+                .build()?;
+
             let menu = MenuBuilder::new(app)
                 .item(&app_menu)
                 .item(&file_menu)
                 .item(&edit_menu)
+                .item(&window_menu)
                 .build()?;
 
             app.set_menu(menu)?;
@@ -194,6 +215,12 @@ pub fn run() {
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "new" => {
                 emit_to_focused_window(app, "menu:file:new", ());
+            }
+            "new_file" => {
+                emit_to_focused_window(app, "menu:file:new_file", ());
+            }
+            "open_project" => {
+                emit_to_focused_window(app, "menu:file:open_project", ());
             }
             "new_window" => {
                 let _ = create_new_window_with_launch_intent(app, WindowLaunchIntent::Welcome);
@@ -210,8 +237,11 @@ pub fn run() {
             "save_as" => {
                 emit_to_focused_window(app, "menu:file:save_as", ());
             }
-            "save_all" => {
-                emit_to_focused_window(app, "menu:file:save_all", ());
+            "export_source" => {
+                emit_to_focused_window(app, "menu:file:export_source", ());
+            }
+            "export_all" => {
+                emit_to_focused_window(app, "menu:file:export_all", ());
             }
             "export_stl" => {
                 emit_to_focused_window(app, "menu:file:export", "stl");
@@ -233,6 +263,27 @@ pub fn run() {
             }
             "export_dxf" => {
                 emit_to_focused_window(app, "menu:file:export", "dxf");
+            }
+            "window_ai" => {
+                emit_to_focused_window(app, "menu:window:open_panel", "ai-chat");
+            }
+            "window_editor" => {
+                emit_to_focused_window(app, "menu:window:open_panel", "editor");
+            }
+            "window_preview" => {
+                emit_to_focused_window(app, "menu:window:open_panel", "preview");
+            }
+            "window_customizer" => {
+                emit_to_focused_window(app, "menu:window:open_panel", "customizer");
+            }
+            "window_console" => {
+                emit_to_focused_window(app, "menu:window:open_panel", "console");
+            }
+            "window_files" => {
+                emit_to_focused_window(app, "menu:window:open_panel", "files");
+            }
+            "window_reset_workspace" => {
+                emit_to_focused_window(app, "menu:window:reset_workspace", ());
             }
             _ => {}
         })

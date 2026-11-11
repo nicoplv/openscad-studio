@@ -344,7 +344,8 @@ export function buildTools(callbacks: AiToolCallbacks) {
           currentCode,
           [],
           'Before AI edit',
-          'ai'
+          'ai',
+          targetPath
         );
 
         // Apply the edit via projectStore

@@ -53,7 +53,6 @@ test.describe('AI Chat Panel', () => {
 
   test('Meta+K shortcut activates AI panel', async ({ app }) => {
     await app.dismissNux();
-    await app.dismissWelcomeScreen();
 
     const editorTab = app.page.locator('.dv-tab').filter({ hasText: 'Editor' });
     if (await editorTab.isVisible().catch(() => false)) {

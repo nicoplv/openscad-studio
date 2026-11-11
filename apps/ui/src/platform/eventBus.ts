@@ -1,15 +1,19 @@
 import type { ExportFormat } from './types';
+import type { WorkspacePanelId } from '../stores/layoutStore';
 
 interface EventMap {
   'menu:file:new': void;
+  'menu:file:new_file': void;
   'menu:file:open': void;
   'menu:file:save': void;
   'menu:file:save_as': void;
   'menu:file:export': ExportFormat;
-  'menu:file:save_project': void;
+  'menu:file:export_source': void;
+  'menu:file:export_all': void;
   'menu:file:open_folder': void;
   'menu:file:open_project': void;
-  'menu:file:save_all': void;
+  'menu:window:open_panel': WorkspacePanelId;
+  'menu:window:reset_workspace': void;
   'render-requested': { source?: 'ai' };
   'history:restore': { code: string };
   'code-updated': {

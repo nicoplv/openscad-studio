@@ -11,8 +11,7 @@ import {
   uploadThumbnail,
 } from '../services/shareService';
 import { getProjectStore } from '../stores/projectStore';
-import type { ShareMode } from '../types/share';
-import { Button, IconButton, Input, Label, SegmentedControl, Text } from './ui';
+import { Button, IconButton, Input, Label, Text } from './ui';
 
 interface ShareDialogProps {
   isOpen: boolean;
@@ -25,32 +24,6 @@ interface ShareDialogProps {
   previewKind: RenderKind | null;
   useModelColors: boolean;
 }
-
-const SHARE_MODE_OPTIONS: Array<{
-  value: ShareMode;
-  label: string;
-  title: string;
-  testId: string;
-}> = [
-  {
-    value: 'default',
-    label: 'Editor First',
-    title: 'Open the shared design in the full editor by default',
-    testId: 'share-mode-default',
-  },
-  {
-    value: 'ai-first',
-    label: 'AI First',
-    title: 'Open the shared design with AI front and center',
-    testId: 'share-mode-ai-first',
-  },
-  {
-    value: 'customizer-first',
-    label: 'Customizer First',
-    title: 'Open the shared design in the customizer by default',
-    testId: 'share-mode-customizer-first',
-  },
-];
 
 function getDefaultShareTitle(tabName: string): string {
   const trimmed = tabName.trim();
@@ -113,7 +86,6 @@ export function ShareDialog({
 }: ShareDialogProps) {
   const analytics = useAnalytics();
   const [title, setTitle] = useState(getDefaultShareTitle(tabName));
-  const [shareMode, setShareMode] = useState<ShareMode>('customizer-first');
   const [isSharing, setIsSharing] = useState(false);
   const [error, setError] = useState<string>('');
   const [shareId, setShareId] = useState<string | null>(null);
@@ -130,7 +102,6 @@ export function ShareDialog({
 
     analytics.track('share dialog opened');
     setTitle(getDefaultShareTitle(tabName));
-    setShareMode('customizer-first');
     setIsSharing(false);
     setError('');
     setShareId(null);
@@ -159,8 +130,7 @@ export function ShareDialog({
   }, [isMultiFile, snapshot, source]);
   const shareLimitBytes = 51_200;
   const canShare = source.trim().length > 0 && codeSize <= shareLimitBytes && !isSharing;
-  const currentShareUrl =
-    shareId && baseShareUrl ? buildShareUrl(baseShareUrl, shareId, shareMode) : '';
+  const currentShareUrl = shareId && baseShareUrl ? buildShareUrl(baseShareUrl, shareId) : '';
 
   if (!isOpen) {
     return null;
@@ -218,7 +188,6 @@ export function ShareDialog({
       analytics.track('design shared', {
         has_forked_from: Boolean(includeAttribution && forkedFrom),
         code_size_bytes: codeSize,
-        share_mode: shareMode,
       });
       void handleUploadThumbnail(result.id, result.thumbnailUploadToken);
     } catch (shareError) {
@@ -235,9 +204,7 @@ export function ShareDialog({
 
     try {
       await navigator.clipboard.writeText(currentShareUrl);
-      analytics.track('share link copied', {
-        mode: shareMode,
-      });
+      analytics.track('share link copied');
       if (copyTimeoutRef.current) {
         clearTimeout(copyTimeoutRef.current);
       }
@@ -378,19 +345,6 @@ export function ShareDialog({
             </div>
           ) : (
             <div className="flex flex-col" style={{ gap: 'var(--space-section-gap)' }}>
-              <div className="flex flex-col" style={{ gap: 'var(--space-label-gap)' }}>
-                <Label className="mb-0">Default View</Label>
-                <SegmentedControl
-                  aria-label="Default shared design view"
-                  options={SHARE_MODE_OPTIONS}
-                  value={shareMode}
-                  onChange={(next) => {
-                    analytics.track('share mode changed', { mode: next, previous_mode: shareMode });
-                    setShareMode(next);
-                  }}
-                />
-              </div>
-
               <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
                 <div className="flex flex-col" style={{ gap: 'var(--space-label-gap)' }}>
                   <Label htmlFor="share-link" className="mb-0">

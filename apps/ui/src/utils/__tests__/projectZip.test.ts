@@ -1,4 +1,12 @@
-import { exportProjectZip, importProjectZip } from '../projectZip';
+import { unzipSync, strFromU8 } from 'fflate';
+import {
+  createProjectDocument,
+  decodeProjectArchive,
+  encodeProjectArchive,
+  exportProjectSources,
+  exportProjectZip,
+  importProjectZip,
+} from '../projectZip';
 
 describe('exportProjectZip', () => {
   it('produces a valid ZIP blob', () => {
@@ -104,5 +112,87 @@ describe('importProjectZip', () => {
     const blob = new Blob([zipped], { type: 'application/zip' });
 
     await expect(importProjectZip(blob)).rejects.toThrow('ZIP contains no renderable .scad files');
+  });
+});
+
+describe('portable project archives', () => {
+  it('round-trips files, tabs, render target and conversation history with an attachment', () => {
+    const document = createProjectDocument(
+      { 'main.scad': 'include <lib/sizes.h>\ncube(size);', 'lib/sizes.h': 'size = 4;' },
+      'main.scad',
+      ['empty']
+    );
+    document.tabs.push({ id: 'sizes', name: 'sizes.h', projectPath: 'lib/sizes.h' });
+    document.activeTabId = 'sizes';
+    document.ai = {
+      activeId: 'second',
+      conversations: [
+        {
+          id: 'first',
+          lastUsed: 1,
+          messages: [
+            {
+              id: 'prompt',
+              type: 'user',
+              timestamp: 1,
+              checkpointId: 'checkpoint',
+              parts: [{ type: 'text', text: 'Make it larger' }],
+            },
+          ],
+          draft: { text: '', attachmentIds: [] },
+          attachments: {},
+          checkpoints: { checkpoint: { path: 'main.scad', code: 'cube(3);' } },
+        },
+        {
+          id: 'second',
+          lastUsed: 2,
+          messages: [],
+          draft: { text: 'Use this reference', attachmentIds: ['picture'] },
+          attachments: {
+            picture: {
+              id: 'picture',
+              filename: 'reference.png',
+              sourceMimeType: 'image/png',
+              status: 'ready',
+              sizeBytes: 3,
+              dedupeKey: 'picture',
+              normalizedMimeType: 'image/png',
+              normalizedData: 'AQID',
+            },
+          },
+          checkpoints: {},
+        },
+      ],
+    };
+    const bytes = encodeProjectArchive(document);
+    expect(decodeProjectArchive(bytes, 'model.oscadstudio')).toEqual({ document, legacy: false });
+
+    const sources = unzipSync(exportProjectSources(document));
+    expect(Object.keys(sources).sort()).toEqual(['empty/', 'lib/sizes.h', 'main.scad']);
+    expect(strFromU8(sources['lib/sizes.h'])).toBe('size = 4;');
+  });
+
+  it('imports a version 1 ZIP with its render target', async () => {
+    const zip = exportProjectZip({
+      files: { 'main.scad': 'cube(1);', 'other.scad': 'sphere(2);' },
+      renderTargetPath: 'other.scad',
+    });
+    const result = decodeProjectArchive(new Uint8Array(await zip.arrayBuffer()), 'legacy.zip');
+    expect(result.legacy).toBe(true);
+    expect(result.document.renderTargetPath).toBe('other.scad');
+    expect(result.document.tabs[0].projectPath).toBe('other.scad');
+  });
+
+  it('rejects escaping paths and tabs pointing outside the source tree', () => {
+    const document = createProjectDocument({ 'main.scad': 'cube(1);' }, 'main.scad');
+    document.files['../other.scad'] = 'cube(2);';
+    expect(() =>
+      decodeProjectArchive(encodeProjectArchive(document), 'model.oscadstudio')
+    ).toThrow();
+    delete document.files['../other.scad'];
+    document.tabs[0].projectPath = 'missing.scad';
+    expect(() =>
+      decodeProjectArchive(encodeProjectArchive(document), 'model.oscadstudio')
+    ).toThrow();
   });
 });

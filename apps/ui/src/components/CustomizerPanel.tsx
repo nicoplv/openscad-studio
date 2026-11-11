@@ -19,7 +19,6 @@ import {
   TbAdjustmentsHorizontal,
   TbRefresh,
   TbSparkles,
-  TbCode,
   TbDownload,
   TbSearch,
   TbChevronDown,
@@ -38,7 +37,6 @@ interface CustomizerPanelProps {
   hasRenderErrors?: boolean;
   renderReady?: boolean;
   onRefineWithAi?: () => void;
-  onEditCode?: () => void;
   onDownloadStl?: () => void;
   isDownloadingStl?: boolean;
   onDownloadSvg?: () => void;
@@ -174,7 +172,6 @@ export function CustomizerPanel({
   hasRenderErrors = false,
   renderReady = false,
   onRefineWithAi,
-  onEditCode,
   onDownloadStl,
   isDownloadingStl = false,
   onDownloadSvg,
@@ -553,11 +550,6 @@ export function CustomizerPanel({
     onRefineWithAi?.();
   }, [onRefineWithAi, trackCustomizerAction]);
 
-  const handleEditCode = useCallback(() => {
-    trackCustomizerAction('open_editor');
-    onEditCode?.();
-  }, [onEditCode, trackCustomizerAction]);
-
   const handleDownloadSvg = useCallback(() => {
     trackCustomizerAction('open_export');
     onDownloadSvg?.();
@@ -601,30 +593,6 @@ export function CustomizerPanel({
               Ask the AI to add customizer parameters with sliders and labels.
             </Text>
           </div>
-        </div>
-
-        <div className="flex flex-col gap-2 w-full max-w-[200px]">
-          <Button
-            type="button"
-            variant="primary"
-            onClick={handleRefineWithAi}
-            className="inline-flex items-center justify-center gap-1.5 text-xs w-full"
-            data-testid="customizer-refine-button"
-          >
-            <TbSparkles size={13} />
-            Refine with AI
-          </Button>
-          {onEditCode && (
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={handleEditCode}
-              className="inline-flex items-center justify-center gap-1.5 text-xs w-full"
-            >
-              <TbCode size={13} />
-              Edit Code
-            </Button>
-          )}
         </div>
       </div>
     );

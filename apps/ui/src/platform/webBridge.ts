@@ -16,8 +16,10 @@ interface FilePickerOptions {
   suggestedName?: string;
 }
 
-interface FileSystemFileHandle {
+export interface ProjectFileHandle {
   getFile(): Promise<File>;
+  queryPermission?(options: { mode: 'readwrite' }): Promise<PermissionState>;
+  requestPermission?(options: { mode: 'readwrite' }): Promise<PermissionState>;
   createWritable(): Promise<FileSystemWritableFileStream>;
   readonly name: string;
 }
@@ -29,8 +31,8 @@ interface FileSystemWritableFileStream extends WritableStream {
 
 declare global {
   interface Window {
-    showOpenFilePicker(options?: FilePickerOptions): Promise<FileSystemFileHandle[]>;
-    showSaveFilePicker(options?: FilePickerOptions): Promise<FileSystemFileHandle>;
+    showOpenFilePicker(options?: FilePickerOptions): Promise<ProjectFileHandle[]>;
+    showSaveFilePicker(options?: FilePickerOptions): Promise<ProjectFileHandle>;
     __closeHandler?: () => Promise<boolean>;
   }
 }
@@ -48,7 +50,7 @@ function filtersToAccept(filters?: FileFilter[]): string {
 }
 
 function hasFileSystemAccess(): boolean {
-  return 'showOpenFilePicker' in window;
+  return typeof window.showOpenFilePicker === 'function';
 }
 
 export class WebBridge implements PlatformBridge {
@@ -244,8 +246,8 @@ export class WebBridge implements PlatformBridge {
     return window.confirm(message);
   }
 
-  setWindowTitle(): void {
-    document.title = 'OpenSCAD Studio';
+  setWindowTitle(title: string): void {
+    document.title = title;
   }
 
   onCloseRequested(handler: () => Promise<boolean>): () => void {

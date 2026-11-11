@@ -1,6 +1,14 @@
 import React, { useCallback, useRef, useState } from 'react';
 import type { IDockviewPanelProps, IDockviewPanelHeaderProps } from 'dockview';
-import { TbCode, TbEye, TbSparkles, TbTerminal2 } from 'react-icons/tb';
+import {
+  TbAdjustmentsHorizontal,
+  TbCode,
+  TbEye,
+  TbFiles,
+  TbSparkles,
+  TbTerminal2,
+  TbX,
+} from 'react-icons/tb';
 import type { IconType } from 'react-icons';
 import { Editor } from '../Editor';
 import { Preview } from '../Preview';
@@ -8,6 +16,7 @@ import { AiPromptPanel, type AiPromptPanelRef } from '../AiPromptPanel';
 import { DiagnosticsPanel } from '../DiagnosticsPanel';
 import { DiffViewer } from '../DiffViewer';
 import { CustomizerPanel } from '../CustomizerPanel';
+import { FileTreePanel } from '../FileTree';
 import { PanelErrorBoundary } from '../ErrorBoundary';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useProjectStore } from '../../stores/projectStore';
@@ -114,6 +123,10 @@ const AiChatPanel: React.FC<IDockviewPanelProps> = () => {
         onCancel={ws.cancelStream}
         messages={ws.messages}
         onNewConversation={ws.newConversation}
+        conversations={ws.conversationList}
+        activeConversationId={ws.currentConversationId}
+        onSelectConversation={ws.selectConversation}
+        interrupted={ws.interrupted}
         currentToolCalls={ws.currentToolCalls}
         currentProvider={ws.currentProvider}
         currentModel={ws.currentModel}
@@ -132,6 +145,26 @@ const ConsolePanel: React.FC<IDockviewPanelProps> = () => {
   return (
     <PanelErrorBoundary panelId="console" panelName="Console">
       <DiagnosticsPanel diagnostics={diagnostics} />
+    </PanelErrorBoundary>
+  );
+};
+
+const FilesPanel: React.FC<IDockviewPanelProps> = () => {
+  const ws = useWorkspace();
+
+  return (
+    <PanelErrorBoundary panelId="files" panelName="Files">
+      <FileTreePanel
+        onFileDoubleClick={ws.onFileDoubleClick}
+        onRenameFile={ws.onRenameFile}
+        onDeleteFile={ws.onDeleteFile}
+        onDeleteFolder={ws.onDeleteFolder}
+        onSetRenderTarget={ws.onSetRenderTarget}
+        onCreateFile={ws.onCreateFile}
+        onCreateFolder={ws.onCreateFolder}
+        onMoveItem={ws.onMoveItem}
+        onAddExternalFiles={ws.onAddExternalFiles}
+      />
     </PanelErrorBoundary>
   );
 };
@@ -162,7 +195,6 @@ const CustomizerPanelWrapper: React.FC<IDockviewPanelProps> = () => {
     settings,
     renderReady,
     onOpenCustomizerAiRefine,
-    onOpenEditorPanel,
   } = useWorkspace();
 
   const renderTargetBaselineCode = useProjectStore((s) =>
@@ -232,7 +264,6 @@ const CustomizerPanelWrapper: React.FC<IDockviewPanelProps> = () => {
         <CustomizerPanel
           code={source}
           baselineCode={renderTargetBaselineCode}
-          isCustomizerFirstMode={settings.ui.defaultLayoutPreset === 'customizer-first'}
           previewKind={previewKind}
           previewAvailable={Boolean(previewSrc)}
           isRendering={isRendering}
@@ -241,7 +272,6 @@ const CustomizerPanelWrapper: React.FC<IDockviewPanelProps> = () => {
           }
           renderReady={renderReady}
           onRefineWithAi={onOpenCustomizerAiRefine}
-          onEditCode={onOpenEditorPanel}
           onDownloadStl={handleDownloadStl}
           isDownloadingStl={isDownloadingStl}
           onDownloadSvg={handleDownloadSvg}
@@ -260,6 +290,7 @@ export const panelComponents: Record<string, React.FC<IDockviewPanelProps>> = {
   console: ConsolePanel,
   'diff-viewer': DiffViewerPanel,
   customizer: CustomizerPanelWrapper,
+  files: FilesPanel,
 };
 
 export interface PanelTypeInfo {
@@ -274,6 +305,8 @@ export const PANEL_TYPES: PanelTypeInfo[] = [
   { id: 'preview', label: 'Preview', icon: TbEye },
   { id: 'ai-chat', label: 'AI', icon: TbSparkles },
   { id: 'console', label: 'Console', icon: TbTerminal2 },
+  { id: 'customizer', label: 'Customizer', icon: TbAdjustmentsHorizontal },
+  { id: 'files', label: 'Files', icon: TbFiles },
 ];
 
 export const WorkspaceTab: React.FC<IDockviewPanelHeaderProps> = (props) => {
@@ -375,6 +408,23 @@ export const WorkspaceTab: React.FC<IDockviewPanelHeaderProps> = (props) => {
           </span>
         )}
       </span>
+
+      {/* eslint-disable-next-line no-restricted-syntax -- compact close action must fit Dockview's 28px tab strip; shared IconButton minimum height is larger */}
+      <button
+        type="button"
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          props.api.close();
+        }}
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+        style={{ color: 'var(--text-tertiary)' }}
+        title={`Close ${props.api.title ?? 'panel'}`}
+        aria-label={`Close ${props.api.title ?? 'panel'}`}
+      >
+        <TbX size={13} aria-hidden="true" />
+      </button>
 
       {menuOpen && (
         <div

@@ -2,7 +2,7 @@ import { createShareEntryStore, isShareEntryBlockingPhase } from '../shareEntryS
 
 describe('shareEntryStore', () => {
   it('tracks the happy path from route context to ready', () => {
-    const store = createShareEntryStore({ shareId: 'abc12345', mode: 'customizer-first' });
+    const store = createShareEntryStore({ shareId: 'abc12345' });
 
     expect(store.getState().phase).toBe('idle');
     expect(isShareEntryBlockingPhase(store.getState().phase)).toBe(true);
@@ -24,7 +24,6 @@ describe('shareEntryStore', () => {
     store.getState().startRendering({
       origin: {
         shareId: 'abc12345',
-        mode: 'customizer-first',
         title: 'Lamp',
         forkedFrom: null,
       },
@@ -38,7 +37,7 @@ describe('shareEntryStore', () => {
   });
 
   it('supports retry, skip, and banner dismissal', () => {
-    const store = createShareEntryStore({ shareId: 'abc12345', mode: 'default' });
+    const store = createShareEntryStore({ shareId: 'abc12345' });
 
     store.getState().fail('Nope');
     expect(store.getState().phase).toBe('error');
@@ -51,7 +50,6 @@ describe('shareEntryStore', () => {
     store.getState().startRendering({
       origin: {
         shareId: 'abc12345',
-        mode: 'default',
         title: 'Lamp',
         forkedFrom: null,
       },

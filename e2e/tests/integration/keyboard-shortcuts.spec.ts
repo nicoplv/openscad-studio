@@ -32,16 +32,6 @@ test.describe('Keyboard shortcuts', () => {
     await app.page.keyboard.press('Meta+t');
     await app.page.waitForTimeout(1000);
 
-    // If welcome screen appeared, dismiss it
-    const welcomeScreen = app.page.locator('[data-testid="welcome-screen"]');
-    if (await welcomeScreen.isVisible({ timeout: 1000 }).catch(() => false)) {
-      const startEmpty = app.page.getByText(/start with empty project/i);
-      if (await startEmpty.isVisible().catch(() => false)) {
-        await startEmpty.click();
-        await app.page.waitForTimeout(500);
-      }
-    }
-
     const content = await getMonacoValue(app.page);
     expect(content).toContain('cube');
   });
@@ -87,13 +77,13 @@ test.describe('Keyboard shortcuts', () => {
     // in headless mode, preventing Monaco from receiving the keystroke.
     // We verify the save mechanism works via File > Save As menu instead.
     await app.page.getByText('File').first().click();
-    await app.page.getByText('Save As').click();
+    await app.page.getByText('Save Project As...').click();
 
     await app.page.waitForFunction(() => (window as any).__downloadCalled__ !== null, {
       timeout: 10_000,
     });
     const result = await app.page.evaluate(() => (window as any).__downloadCalled__);
-    expect(result.filename).toMatch(/\.scad$/);
+    expect(result.filename).toMatch(/\.oscadstudio$/);
   });
 
   test('Meta+Shift+F formats code', async ({ app }) => {

@@ -19,6 +19,10 @@ import {
   type ViewerComment,
 } from '../../types/aiChat';
 import { useAiAgent } from '../useAiAgent';
+import { getProjectStore } from '../../stores/projectStore';
+import type { AiToolCallbacks } from '../../services/aiService';
+import { replaceProjectDocument, initializeStarterProject } from '../../services/projectLifecycle';
+import { createProjectDocument } from '../../utils/projectZip';
 import {
   createAnalyticsSpy,
   createHookHarness,
@@ -79,6 +83,96 @@ describe('useAiAgent', () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it('keeps earlier conversations and restores their drafts when switching back', async () => {
+    storeApiKey('anthropic', 'test-key');
+    const modelMessages = jest.fn(() => []);
+    const project = getProjectStore().getState();
+    project.resetToUntitledProject();
+    const renderSource = jest.fn();
+    const buildTools = (callbacks: AiToolCallbacks) => {
+      renderSource(callbacks.readProjectFile('main.scad'));
+      return {};
+    };
+    const hook = createHarness({
+      testOverrides: {
+        availableProviders: ['anthropic'],
+        createModel: (() => ({ id: 'model' })) as never,
+        buildTools: buildTools as never,
+        messagesToModelMessages: modelMessages,
+        startAiStream: (async () => createStreamResult([])) as never,
+      },
+    });
+
+    await act(async () => {
+      await hook.current().submitPrompt('First project question');
+    });
+    const first = hook.current().currentConversationId!;
+    act(() => hook.current().setDraftText('Draft in the first conversation'));
+    act(() => hook.current().newConversation());
+    expect(hook.current().messages).toHaveLength(0);
+    await act(async () => {
+      await hook.current().submitPrompt('Second project question');
+    });
+    const second = hook.current().currentConversationId!;
+
+    act(() => hook.current().selectConversation(first));
+    expect(hook.current().draft.text).toBe('Draft in the first conversation');
+    expect(hook.current().conversationList.map(({ id }) => id)).toEqual([first, second]);
+    project.updateFileContent('main.scad', 'sphere(2);');
+    await act(async () => {
+      await hook.current().submitPrompt('Continue the first conversation');
+    });
+    expect(renderSource).toHaveBeenLastCalledWith('sphere(2);');
+    project.resetProject();
+    expect(modelMessages).toHaveBeenLastCalledWith(
+      [
+        expect.objectContaining({ parts: [{ type: 'text', text: 'First project question' }] }),
+        expect.objectContaining({
+          parts: [{ type: 'text', text: 'Continue the first conversation' }],
+        }),
+      ],
+      {}
+    );
+  });
+
+  it('restores an archived checkpoint into its recorded file while another tab is active', () => {
+    const document = createProjectDocument(
+      { 'main.scad': 'cube(1);', 'part.scad': 'sphere(3);' },
+      'main.scad'
+    );
+    document.ai = {
+      activeId: 'conversation',
+      conversations: [
+        {
+          id: 'conversation',
+          lastUsed: 1,
+          messages: [
+            {
+              id: 'prompt',
+              timestamp: 1,
+              type: 'user',
+              checkpointId: 'before',
+              parts: [{ type: 'text', text: 'Make the part bigger' }],
+            },
+          ],
+          draft: { text: '', attachmentIds: [] },
+          attachments: {},
+          checkpoints: { before: { path: 'part.scad', code: 'sphere(2);' } },
+        },
+      ],
+    };
+    replaceProjectDocument(document, { starter: true });
+    const hook = createHarness({ persistProject: true });
+
+    act(() => {
+      expect(hook.current().handleRestoreCheckpoint('before', [])).toBe(true);
+    });
+    expect(getProjectStore().getState().files['main.scad'].content).toBe('cube(1);');
+    expect(getProjectStore().getState().files['part.scad'].content).toBe('sphere(2);');
+    expect(hook.current().messages).toEqual([]);
+    act(() => initializeStarterProject());
   });
 
   it('falls back to a preferred provider model when the stored provider is unavailable', async () => {
@@ -257,6 +351,7 @@ describe('useAiAgent', () => {
           setMeasurementUnit: (unit: 'mm' | 'cm' | 'in' | 'units') => void;
         }
       | undefined;
+    storeApiKey('anthropic', 'test-key');
     const buildTools = jest.fn((callbacks) => {
       capturedCallbacks = callbacks;
       return {};
@@ -265,6 +360,8 @@ describe('useAiAgent', () => {
     const hook = createHarness({
       testOverrides: {
         availableProviders: ['anthropic'],
+        createModel: (() => ({ id: 'model' })) as never,
+        startAiStream: (async () => createStreamResult([])) as never,
         buildTools: buildTools as never,
         updateSetting: updateSetting as never,
         loadSettings: (() => ({ viewer: { measurementUnit: 'cm' } })) as never,
@@ -278,6 +375,9 @@ describe('useAiAgent', () => {
       hook.current().updateUseModelColors(false);
     });
 
+    await act(async () => {
+      await hook.current().submitPrompt('Read the project');
+    });
     expect(capturedCallbacks).toBeDefined();
     expect(await capturedCallbacks!.captureCurrentView()).toBe('data:image/png;base64,abc');
     expect(capturedCallbacks!.get3dPreviewUrl()).toBe('blob:mesh');

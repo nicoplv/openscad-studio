@@ -42,7 +42,7 @@ export function createShareEntryStore(initialContext: ShareContext | null = null
 
     setContext: (context) => {
       set((state) => {
-        if (state.context?.shareId === context?.shareId && state.context?.mode === context?.mode) {
+        if (state.context?.shareId === context?.shareId) {
           return state;
         }
 

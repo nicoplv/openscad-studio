@@ -114,7 +114,7 @@ const DEFAULT_SETTINGS: Settings = {
   ui: {
     customizerWidth: 420,
     hasCompletedNux: true,
-    defaultLayoutPreset: 'default',
+    defaultLayoutPreset: 'ai-first',
     hasDismissedViewerControlsHint: false,
     fileTreeVisible: true,
     fileTreeWidth: 200,
@@ -177,6 +177,7 @@ export function loadSettings(): Settings {
         ui: {
           ...DEFAULT_SETTINGS.ui,
           ...(parsed.ui || {}),
+          defaultLayoutPreset: 'ai-first',
         },
         viewer: {
           ...DEFAULT_SETTINGS.viewer,

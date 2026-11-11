@@ -16,6 +16,7 @@ export interface EditorCheckpoint {
   diagnostics: Diagnostic[];
   description: string;
   change_type: ChangeType;
+  projectPath?: string;
 }
 
 export interface CheckpointDiff {
@@ -36,7 +37,8 @@ class HistoryService {
     code: string,
     diagnostics: Diagnostic[],
     description: string,
-    changeType: ChangeType
+    changeType: ChangeType,
+    projectPath?: string
   ): string {
     const checkpoint: EditorCheckpoint = {
       id: createRandomId(),
@@ -45,6 +47,7 @@ class HistoryService {
       diagnostics,
       description,
       change_type: changeType,
+      ...(projectPath ? { projectPath } : {}),
     };
 
     // If not at latest, truncate forward history

@@ -25,9 +25,15 @@ import {
 } from './services/desktopMcp';
 import { openFileInWindow, openWorkspaceFolderInWindow } from './services/windowOpenService';
 import { captureSentryException } from './sentry';
-import { getProjectState, getProjectStore } from './stores/projectStore';
+import { getProjectState } from './stores/projectStore';
+import {
+  adoptExternalProject,
+  initializeStarterProject,
+  restoreLastProject,
+  startProjectRecovery,
+} from './services/projectLifecycle';
 import { loadSettings } from './stores/settingsStore';
-import { workspaceStore } from './stores/workspaceStore';
+import { getWorkspaceState } from './stores/workspaceStore';
 import { initFormatter } from './utils/formatter';
 import './index.css';
 
@@ -167,7 +173,7 @@ function renderOpenFailureScreen(args: {
   onRetry: () => void;
   onOpenFolder: () => void;
   onOpenFile: () => void;
-  onGoToWelcome: () => void;
+  onGoToEditor: () => void;
 }) {
   return (
     <div
@@ -236,11 +242,11 @@ function renderOpenFailureScreen(args: {
           </Button>
           <Button
             type="button"
-            onClick={args.onGoToWelcome}
+            onClick={args.onGoToEditor}
             variant="secondary"
             style={secondaryButtonStyle}
           >
-            Go to Welcome
+            Go to Editor
           </Button>
         </div>
       </div>
@@ -290,11 +296,6 @@ function intentToRequest(intent: DesktopWindowLaunchIntent): DesktopWindowOpenRe
 
 function normalizeErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
-}
-
-function resetWindowToWelcomeState() {
-  getProjectStore().getState().resetToUntitledProject();
-  workspaceStore.getState().resetWorkspace();
 }
 
 function BootstrapApp() {
@@ -417,6 +418,9 @@ function BootstrapApp() {
             const result = await openWorkspaceFolderInWindow(request.folder_path, {
               createIfEmpty: request.create_if_empty,
             });
+            adoptExternalProject(
+              request.folder_path.split('/').filter(Boolean).pop() ?? 'workspace'
+            );
             const readyState: BootstrapWindowState = {
               mode: 'ready',
               targetPath: null,
@@ -448,6 +452,8 @@ function BootstrapApp() {
             throw new Error(`Could not read file at ${request.file_path}.`);
           }
           const result = await openFileInWindow(fileResult);
+          if (!result.reusedExistingTab)
+            adoptExternalProject(fileResult.name.replace(/\.[^.]+$/, ''));
           const readyState: BootstrapWindowState = {
             mode: 'ready',
             targetPath: null,
@@ -597,25 +603,18 @@ function BootstrapApp() {
         }
 
         reportStartupPhase('launch_intent_none');
-        setBootDetail('welcome_ready');
-        resetWindowToWelcomeState();
-        const welcomeState: BootstrapWindowState = {
-          mode: 'welcome',
+        const restored = !launchIntent && (await restoreLastProject());
+        if (cancelled) return;
+        if (!restored) initializeStarterProject();
+        const editorState: BootstrapWindowState = {
+          mode: restored ? 'ready' : 'welcome',
           targetPath: null,
           errorMessage: null,
           failedRequest: null,
         };
-        setWindowState(welcomeState);
-        reportStartupPhase('welcome_ready');
-        if (platform.capabilities.hasFileSystem) {
-          await syncDesktopMcpWindowContext({
-            title: document.title || 'OpenSCAD Studio',
-            workspaceRoot: null,
-            renderTargetPath: null,
-            showWelcome: true,
-            mode: 'welcome',
-          });
-        }
+        setWindowState(editorState);
+        reportStartupPhase(restored ? 'platform_ready' : 'welcome_ready');
+        await syncWindowContext(editorState);
       })
       .catch((error) => {
         if (cancelled) return;
@@ -641,7 +640,7 @@ function BootstrapApp() {
       cancelled = true;
       bridgeCleanup?.();
     };
-  }, [reportStartupPhase, runOpenRequest]);
+  }, [reportStartupPhase, runOpenRequest, syncWindowContext]);
 
   const handleRetry = useCallback(() => {
     const failedRequest = windowState.failedRequest;
@@ -679,19 +678,18 @@ function BootstrapApp() {
       });
   }, [runOpenRequest]);
 
-  const handleGoToWelcome = useCallback(() => {
-    resetWindowToWelcomeState();
-    const welcomeState: BootstrapWindowState = {
-      mode: 'welcome',
+  const handleGoToEditor = useCallback(async () => {
+    if (!Object.keys(getProjectState().files).length && !(await restoreLastProject())) {
+      initializeStarterProject();
+    }
+    const editorState: BootstrapWindowState = {
+      mode: getWorkspaceState().showWelcome ? 'welcome' : 'ready',
       targetPath: null,
       errorMessage: null,
       failedRequest: null,
     };
-    setWindowState(welcomeState);
-    void syncWindowContext(welcomeState, {
-      workspaceRoot: null,
-      renderTargetPath: null,
-    });
+    setWindowState(editorState);
+    await syncWindowContext(editorState);
   }, [syncWindowContext]);
 
   if (startupError) {
@@ -718,7 +716,7 @@ function BootstrapApp() {
       onRetry: handleRetry,
       onOpenFolder: handleOpenFolder,
       onOpenFile: handleOpenFile,
-      onGoToWelcome: handleGoToWelcome,
+      onGoToEditor: handleGoToEditor,
     });
   }
 
@@ -767,5 +765,6 @@ window.addEventListener('unhandledrejection', (event) => {
 });
 
 reportEarlyStartupPhase('module_loaded', document.readyState);
+startProjectRecovery();
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(<BootstrapApp />);

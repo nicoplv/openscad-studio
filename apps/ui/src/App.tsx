@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { DockviewReact } from 'dockview';
 import type { DockviewReadyEvent } from 'dockview';
 import 'dockview/dist/styles/dockview.css';
@@ -7,36 +7,27 @@ import { ShareDialog } from './components/ShareDialog';
 import { ShareBanner } from './components/ShareBanner';
 import type { AiPromptPanelRef } from './components/AiPromptPanel';
 import { SettingsDialog, type SettingsSection } from './components/SettingsDialog';
-import { WelcomeScreen } from './components/WelcomeScreen';
-import {
-  HeaderWorkspaceControls,
-  type HeaderLayoutPreset,
-} from './components/HeaderWorkspaceControls';
 import { WebMenuBar } from './components/WebMenuBar';
-import { FileTreePanel } from './components/FileTree';
 import { isValidDrop } from './utils/isValidDrop';
 import {
   Button,
   IconButton,
-  Tooltip,
-  TooltipContent,
   TooltipProvider,
-  TooltipTrigger,
 } from './components/ui';
 import { panelComponents, tabComponents, WorkspaceTab } from './components/panels/PanelComponents';
 import { useTheme } from './contexts/ThemeContext';
 import { WorkspaceProvider } from './contexts/WorkspaceContext';
 import type { WorkspaceState } from './contexts/WorkspaceContext';
-import { useAnalytics, type LayoutSelectionSource } from './analytics/runtime';
+import { useAnalytics } from './analytics/runtime';
 import {
   setDockviewApi,
-  getDockviewApi,
-  addPresetPanels,
-  applyWorkspacePreset,
+  addDefaultPanels,
+  getLayoutMode,
+  restoreLayout,
+  resetLayout,
   saveLayout,
-  clearSavedLayout,
-  MOBILE_LAYOUT_MEDIA_QUERY,
   openPanel,
+  type WorkspacePanelId,
 } from './stores/layoutStore';
 import { useRenderOrchestrator } from './hooks/useRenderOrchestrator';
 import { useAiAgent } from './hooks/useAiAgent';
@@ -53,8 +44,7 @@ import {
 import { exportModelWithContext } from './services/exportService';
 import { getPreviewSceneStyle } from './services/previewSceneConfig';
 import { isShareEnabled } from './services/shareService';
-import { openFileInWindow, openWorkspaceFolderInWindow } from './services/windowOpenService';
-import { useSettings, loadSettings, updateSetting } from './stores/settingsStore';
+import { useSettings, loadSettings } from './stores/settingsStore';
 import { getApiKey, getOpenAiCompatibleConfig } from './stores/apiKeyStore';
 import {
   selectActiveRender,
@@ -71,71 +61,84 @@ import {
   getRenderArtifactState,
   useRenderArtifactStore,
 } from './stores/renderArtifactStore';
-import { DEFAULT_TAB_NAME } from './stores/workspaceFactories';
-import { formatOpenScadCode } from './utils/formatter';
-import { addRecentFile, removeRecentFile } from './utils/recentFiles';
-import { captureCurrentPreview, MAIN_PREVIEW_VIEWER_ID } from './utils/capturePreview';
-import { normalizeAppError, notifyError, notifySuccess } from './utils/notifications';
-import { exportProjectZip } from './utils/projectZip';
 import {
-  getInitialMacDownloadArch,
-  getMacDownloadUrl,
-  resolveMacDownloadArch,
-  type MacArch,
-} from './utils/macDownload';
-import { getRelativeProjectPath } from './utils/projectFilePaths';
-import { generateRandomProjectName } from './utils/projectNaming';
+  createWorkspaceTab,
+  DEFAULT_OPENSCAD_CODE,
+  DEFAULT_TAB_NAME,
+} from './stores/workspaceFactories';
+import {
+  captureProjectDocument,
+  flushProjectRecovery,
+  getProjectEpoch,
+  hasUnsavedProject,
+  importProjectSource,
+  replaceProjectDocument,
+  saveCurrentProject,
+  useProjectSession,
+} from './services/projectLifecycle';
+import { pickProjectArchive } from './platform/projectFile';
+import { isValidProjectPath } from './stores/projectDocument';
+import { findEmptyFolders } from './utils/workspaceFolder';
+import { captureCurrentPreview, MAIN_PREVIEW_VIEWER_ID } from './utils/capturePreview';
+import { notifyError, notifySuccess } from './utils/notifications';
+import {
+  createProjectDocument,
+  decodeProjectArchive,
+  exportProjectSources,
+  PROJECT_EXTENSION,
+} from './utils/projectZip';
 import { resolveFolderImport } from './utils/folderImport';
 import { useShareEntry } from './hooks/useShareEntry';
-import { TbBrandGithub, TbSettings, TbDownload, TbShare3 } from 'react-icons/tb';
+import { TbSettings, TbDownload, TbShare3 } from 'react-icons/tb';
 import { Toaster } from 'sonner';
-import type { AiDraft } from './types/aiChat';
 import type { WorkspaceTab as WorkspaceDocumentTab } from './stores/workspaceTypes';
 import {
   OPENSCAD_PROJECT_FILE_EXTENSIONS,
   isOpenScadProjectFilePath,
 } from '../../../packages/shared/src/openscadProjectFiles';
 
-const REPOSITORY_URL = 'https://github.com/zacharyfmarion/openscad-studio';
-const HEADER_WORKSPACE_SWITCHER_MEDIA_QUERY = '(max-width: 900px)';
-
 const OPENSCAD_FILE_FILTERS = [
   { name: 'OpenSCAD Files', extensions: [...OPENSCAD_PROJECT_FILE_EXTENSIONS] },
 ];
 /** Prompt the user to pick a folder and return its project files, or null if cancelled. */
-function pickFolder(): Promise<{ files: Record<string, string>; renderTargetPath: string } | null> {
-  return new Promise((resolve) => {
+function pickFolder(): Promise<{
+  files: Record<string, string>;
+  renderTargetPath: string;
+  name?: string;
+} | null> {
+  return new Promise((resolve, reject) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.setAttribute('webkitdirectory', '');
     input.onchange = async () => {
-      const fileList = input.files;
-      if (!fileList || fileList.length === 0) {
-        resolve(null);
-        return;
-      }
-
-      const files: Record<string, string> = {};
-      let workspaceName: string | null = null;
-      for (const file of Array.from(fileList)) {
-        // webkitRelativePath gives "folderName/path/to/file.scad"
-        const relativePath = file.webkitRelativePath;
-        if (!isOpenScadProjectFilePath(relativePath)) continue;
-        // Strip the top-level folder name
-        const parts = relativePath.split('/');
-        workspaceName ??= parts[0] || null;
-        const pathWithoutRoot = parts.slice(1).join('/');
-        if (pathWithoutRoot) {
-          files[pathWithoutRoot] = await file.text();
+      try {
+        const fileList = input.files;
+        if (!fileList || fileList.length === 0) {
+          resolve(null);
+          return;
         }
-      }
 
-      resolve(
-        resolveFolderImport(files, {
-          workspaceName,
-          createIfEmpty: true,
-        })
-      );
+        const files: Record<string, string> = {};
+        let workspaceName: string | null = null;
+        for (const file of Array.from(fileList)) {
+          // webkitRelativePath gives "folderName/path/to/file.scad"
+          const relativePath = file.webkitRelativePath;
+          if (!isOpenScadProjectFilePath(relativePath)) continue;
+          // Strip the top-level folder name
+          const parts = relativePath.split('/');
+          workspaceName ??= parts[0] || null;
+          const pathWithoutRoot = parts.slice(1).join('/');
+          if (pathWithoutRoot) {
+            files[pathWithoutRoot] = await file.text();
+          }
+        }
+
+        const result = resolveFolderImport(files, { workspaceName });
+        if (!result) throw new Error('The folder has no renderable .scad files.');
+        resolve({ ...result, name: workspaceName ?? undefined });
+      } catch (error) {
+        reject(error);
+      }
     };
     input.oncancel = () => resolve(null);
     input.click();
@@ -183,60 +186,6 @@ function revokeBlobUrl(url: string | null | undefined) {
   URL.revokeObjectURL(url);
 }
 
-function useMacDownloadUrl() {
-  const [arch, setArch] = useState<MacArch>(() => getInitialMacDownloadArch());
-
-  useEffect(() => {
-    let isCancelled = false;
-
-    void resolveMacDownloadArch().then((resolvedArch) => {
-      if (!isCancelled) {
-        setArch(resolvedArch);
-      }
-    });
-
-    return () => {
-      isCancelled = true;
-    };
-  }, []);
-
-  return getMacDownloadUrl(arch);
-}
-
-interface HeaderIconLinkProps {
-  href: string;
-  title: string;
-  ariaLabel: string;
-  children: ReactNode;
-  openInNewTab?: boolean;
-}
-
-function HeaderIconLink({
-  href,
-  title,
-  ariaLabel,
-  children,
-  openInNewTab = false,
-}: HeaderIconLinkProps) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <a
-          href={href}
-          aria-label={ariaLabel}
-          title={title}
-          target={openInNewTab ? '_blank' : undefined}
-          rel={openInNewTab ? 'noreferrer' : undefined}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-transparent bg-transparent text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
-        >
-          {children}
-        </a>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">{title}</TooltipContent>
-    </Tooltip>
-  );
-}
-
 /**
  * Returns a path that does not conflict with any path in `existing`.
  * Appends _1, _2, … to the filename stem until a free slot is found.
@@ -255,11 +204,6 @@ function resolvePathConflict(candidatePath: string, existing: Set<string>): stri
 
 function App() {
   const { isMobile } = useMobileLayout();
-  const [isHeaderWorkspaceSwitcherHidden, setIsHeaderWorkspaceSwitcherHidden] = useState(
-    () =>
-      typeof window !== 'undefined' &&
-      window.matchMedia(HEADER_WORKSPACE_SWITCHER_MEDIA_QUERY).matches
-  );
   const tabs = useWorkspaceStore(selectTabs);
   const activeTabId = useWorkspaceStore(selectActiveTabId) ?? '';
   const showWelcome = useWorkspaceStore(selectShowWelcome);
@@ -279,13 +223,10 @@ function App() {
   const markTabSaved = useWorkspaceStore((state) => state.markTabSaved);
   const renameTab = useWorkspaceStore((state) => state.renameTab);
   const closeTabLocal = useWorkspaceStore((state) => state.closeTabLocal);
-  const openSharedDocument = useWorkspaceStore((state) => state.openSharedDocument);
   const reorderWorkspaceTabs = useWorkspaceStore((state) => state.reorderTabs);
   const beginTabRender = useWorkspaceStore((state) => state.beginTabRender);
   const commitTabRenderResult = useWorkspaceStore((state) => state.commitTabRenderResult);
   const commitTabRenderError = useWorkspaceStore((state) => state.commitTabRenderError);
-  const showWelcomeScreen = useWorkspaceStore((state) => state.showWelcomeScreen);
-  const hideWelcomeScreen = useWorkspaceStore((state) => state.hideWelcomeScreen);
 
   if (!activeTab) {
     throw new Error('Workspace store must always provide an active tab');
@@ -305,32 +246,52 @@ function App() {
   const { theme } = useTheme();
   const previewSceneStyle = useMemo(() => getPreviewSceneStyle(theme), [theme]);
   const { capabilities } = getPlatform();
-  const macDownloadUrl = useMacDownloadUrl();
   const { undo, redo } = useHistory();
-  const [resolvedProjectDir, setResolvedProjectDir] = useState<string | null>(null);
-  /** Pre-generated project name shown on welcome screen (not yet created on disk) */
-  const [pendingProjectName, setPendingProjectName] = useState<string>(() =>
-    generateRandomProjectName()
-  );
   const initialShareContext = useMemo(
     () => (typeof window === 'undefined' ? null : (window.__SHARE_CONTEXT ?? null)),
     []
   );
+  const projectName = useProjectSession((state) => state.name);
+  const projectDirty = useProjectSession((state) => state.revision !== state.savedRevision);
+  const replacementDialogRef = useRef<HTMLDialogElement>(null);
+  const replacementRef = useRef<((proceed: boolean) => void) | null>(null);
+  const [confirmingReplacement, setConfirmingReplacement] = useState(false);
+  const [isSavingReplacement, setIsSavingReplacement] = useState(false);
 
-  // Resolve the effective default project directory from settings or platform default
-  useEffect(() => {
-    if (!capabilities.hasFileSystem) return;
-    const configured = settings.project.defaultProjectDirectory;
-    if (configured) {
-      setResolvedProjectDir(configured);
-    } else {
-      void getPlatform()
-        .getDefaultProjectsDirectory()
-        .then((dir) => {
-          if (dir) setResolvedProjectDir(dir);
-        });
+  const saveProject = useCallback(async (saveAs = false) => {
+    try {
+      const saved = await saveCurrentProject(saveAs);
+      if (saved) notifySuccess('Project saved', { toastId: 'save-project-success' });
+      return saved;
+    } catch (error) {
+      notifyError({
+        operation: 'save-project',
+        error,
+        fallbackMessage: 'Could not save the project',
+      });
+      return false;
     }
-  }, [capabilities.hasFileSystem, settings.project.defaultProjectDirectory]);
+  }, []);
+
+  const confirmProjectReplacement = useCallback(() => {
+    if (!hasUnsavedProject()) return Promise.resolve(true);
+    if (replacementRef.current) return Promise.resolve(false);
+    return new Promise<boolean>((resolve) => {
+      replacementRef.current = resolve;
+      setConfirmingReplacement(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (confirmingReplacement) replacementDialogRef.current?.showModal();
+  }, [confirmingReplacement]);
+
+  const finishProjectReplacement = (proceed: boolean) => {
+    replacementRef.current?.(proceed);
+    replacementRef.current = null;
+    replacementDialogRef.current?.close();
+    setConfirmingReplacement(false);
+  };
 
   useEffect(() => {
     if (!capabilities.hasFileSystem) return;
@@ -350,22 +311,10 @@ function App() {
     };
   }, [capabilities.hasFileSystem, settings.mcp.enabled, settings.mcp.port]);
 
-  useEffect(() => {
-    const mq = window.matchMedia(HEADER_WORKSPACE_SWITCHER_MEDIA_QUERY);
-    const handleChange = (event: MediaQueryListEvent) => {
-      setIsHeaderWorkspaceSwitcherHidden(event.matches);
-    };
-
-    setIsHeaderWorkspaceSwitcherHidden(mq.matches);
-    mq.addEventListener('change', handleChange);
-    return () => mq.removeEventListener('change', handleChange);
-  }, []);
-
   const renderTargetContent = useProjectStore((s) =>
     s.renderTargetPath ? (s.files[s.renderTargetPath]?.content ?? '') : ''
   );
   const contentVersion = useProjectStore((s) => s.contentVersion);
-  const hasMultipleFiles = useProjectStore((s) => Object.keys(s.files).length > 1);
 
   const {
     previewKind,
@@ -378,7 +327,7 @@ function App() {
   } = useRenderOrchestrator({
     source: renderTargetContent,
     contentVersion,
-    suppressInitialRender: Boolean(initialShareContext) || showWelcome,
+    suppressInitialRender: Boolean(initialShareContext),
     workingDir: projectRoot,
     autoRenderOnIdle: settings.editor.autoRenderOnIdle,
     autoRenderDelayMs: settings.editor.autoRenderDelayMs,
@@ -473,64 +422,34 @@ function App() {
   const activeError = activeRenderArtifact?.error ?? renderTargetRender?.error ?? error;
 
   const handleOpenFallbackEditor = useCallback(() => {
-    hideWelcomeScreen();
     window.history.replaceState({}, document.title, '/');
 
     if (!renderTargetRender?.lastRenderedContent && ready) {
       requestRender('initial', { immediate: true });
     }
-  }, [renderTargetRender?.lastRenderedContent, hideWelcomeScreen, ready]);
+  }, [renderTargetRender?.lastRenderedContent, ready]);
 
   useEffect(() => {
     getRenderArtifactState().setActiveRenderTarget(renderTargetPath ?? null, projectRoot);
   }, [projectRoot, renderTargetPath]);
 
-  const initializeProject = useCallback(
-    async (filePath: string | null, fileName: string, content: string) => {
-      if (!filePath) {
-        const name = fileName || DEFAULT_TAB_NAME;
-        getProjectStore()
-          .getState()
-          .openProject(null, { [name]: content }, name);
-        return;
-      }
-
-      await openFileInWindow(
-        {
-          path: filePath,
-          name: fileName || DEFAULT_TAB_NAME,
-          content,
-        },
-        {
-          trackRecent: true,
-        }
-      );
-    },
-    []
-  );
-
   const handleOpenSharedDocument = useCallback(
-    (share: {
+    async (share: {
       title: string;
       code: string;
       files?: Record<string, string>;
       renderTarget?: string;
     }) => {
-      if (share.files && share.renderTarget) {
-        const store = getProjectStore();
-        store.getState().openProject(null, share.files, share.renderTarget);
-        return openSharedDocument({
-          name: share.title,
-          projectPath: share.renderTarget,
-        });
-      }
-      void initializeProject(null, share.title, share.code);
-      return openSharedDocument({
-        name: share.title,
-        projectPath: share.title,
+      if (!(await confirmProjectReplacement())) return null;
+      const target = share.files && share.renderTarget ? share.renderTarget : DEFAULT_TAB_NAME;
+      const document = createProjectDocument(share.files ?? { [target]: share.code }, target);
+      replaceProjectDocument(document, {
+        name: `${share.title}.${PROJECT_EXTENSION}`,
+        dirty: true,
       });
+      return document.activeTabId;
     },
-    [initializeProject, openSharedDocument]
+    [confirmProjectReplacement]
   );
 
   const handleRenderSharedDocument = useCallback(
@@ -543,7 +462,6 @@ function App() {
   );
 
   const {
-    context: shareContext,
     origin: shareOrigin,
     error: shareLoadError,
     phase: sharePhase,
@@ -566,10 +484,11 @@ function App() {
     const checkpoint = await undo();
     if (checkpoint) {
       const store = getProjectStore().getState();
-      const projectPath = activeTab.projectPath;
+      const projectPath = checkpoint.projectPath ?? activeTab.projectPath;
+      if (!store.files[projectPath]) return;
       store.updateFileContent(projectPath, checkpoint.code);
       store.setCustomizerBase(projectPath, checkpoint.code);
-      requestRender('history_restore', { immediate: true, code: checkpoint.code });
+      requestRender('history_restore', { immediate: true });
     }
   }, [activeTab.projectPath, undo]);
 
@@ -577,10 +496,11 @@ function App() {
     const checkpoint = await redo();
     if (checkpoint) {
       const store = getProjectStore().getState();
-      const projectPath = activeTab.projectPath;
+      const projectPath = checkpoint.projectPath ?? activeTab.projectPath;
+      if (!store.files[projectPath]) return;
       store.updateFileContent(projectPath, checkpoint.code);
       store.setCustomizerBase(projectPath, checkpoint.code);
-      requestRender('history_restore', { immediate: true, code: checkpoint.code });
+      requestRender('history_restore', { immediate: true });
     }
   }, [activeTab.projectPath, redo]);
 
@@ -610,7 +530,6 @@ function App() {
     lastContextUsage,
     availableProviders,
     submitDraft,
-    setDraft,
     setDraftText,
     addDraftFiles,
     removeDraftAttachment,
@@ -621,6 +540,10 @@ function App() {
     rejectDiff,
     clearError: clearAiError,
     newConversation,
+    selectConversation,
+    conversationList,
+    currentConversationId,
+    interrupted,
     setCurrentModel,
     handleRestoreCheckpoint,
     updateCapturePreview,
@@ -628,13 +551,13 @@ function App() {
     updatePreviewSceneStyle,
     updateUseModelColors,
     loadModelAndProviders,
-  } = useAiAgent();
+  } = useAiAgent({ persistProject: true });
 
   // Tab management functions
   const createNewTab = useCallback(
     (filePath?: string | null, content?: string, name?: string): string => {
       const projectPath = name ?? DEFAULT_TAB_NAME;
-      const defaultContent = '// Type your OpenSCAD code here\ncube([10, 10, 10]);';
+      const defaultContent = DEFAULT_OPENSCAD_CODE;
 
       // Ensure the file exists in projectStore
       const store = getProjectStore().getState();
@@ -656,7 +579,7 @@ function App() {
   const [editorFocusRequestKey, setEditorFocusRequestKey] = useState(0);
 
   const focusEditorPanel = useCallback(() => {
-    openPanel('editor', 'editor', 'Editor');
+    openPanel('editor');
     setEditorFocusRequestKey((current) => current + 1);
   }, []);
 
@@ -675,50 +598,28 @@ function App() {
   );
 
   const closeTab = useCallback(
-    async (id: string) => {
-      const tab = tabs.find((t) => t.id === id);
+    (id: string) => {
+      const tab = tabs.find((candidate) => candidate.id === id);
       if (!tab) return;
-
-      const isDirty = getProjectStore().getState().files[tab.projectPath]?.isDirty ?? false;
-      if (isDirty && capabilities.hasFileSystem) {
-        const platform = getPlatform();
-        const wantsToSave = await platform.ask(`Save changes to ${tab.name}?`, {
-          title: 'Unsaved Changes',
-          kind: 'warning',
-          okLabel: 'Save',
-          cancelLabel: "Don't Save",
-        });
-
-        if (wantsToSave) {
-          return;
-        } else {
-          const confirmDiscard = await platform.confirm(
-            'Are you sure you want to discard your changes?',
-            {
-              title: 'Discard Changes',
-              kind: 'warning',
-              okLabel: 'Discard',
-              cancelLabel: 'Cancel',
-            }
-          );
-          if (!confirmDiscard) return;
-        }
-
-        // Revert file content to saved state so the file tree dirty indicator clears
-        getProjectStore().getState().revertFile(tab.projectPath);
+      const project = getProjectStore().getState();
+      if (tabs.length === 1) {
+        const nextPath = [project.renderTargetPath, ...Object.keys(project.files)].find(
+          (path) => path && path !== tab.projectPath
+        );
+        if (!nextPath) return;
+        createNewTab(
+          project.projectRoot ? `${project.projectRoot}/${nextPath}` : null,
+          undefined,
+          nextPath
+        );
       }
-
       revokeBlobUrl(tab.render.previewSrc);
       closeTabLocal(id);
-      analytics.track('tab closed', { had_unsaved_changes: isDirty });
-
-      // If closing this tab caused workspace to reset to welcome, also reset project
-      const wsState = getWorkspaceState();
-      if (wsState.showWelcome && wsState.tabs.length === 1 && !wsState.tabs[0].filePath) {
-        getProjectStore().getState().resetToUntitledProject();
-      }
+      analytics.track('tab closed', {
+        had_unsaved_changes: Boolean(project.files[tab.projectPath]?.isDirty),
+      });
     },
-    [analytics, closeTabLocal, tabs, capabilities.hasFileSystem]
+    [analytics, closeTabLocal, createNewTab, tabs]
   );
 
   const reorderTabs = useCallback(
@@ -729,7 +630,7 @@ function App() {
   );
 
   // File tree handlers
-  const handleFileTreeClick = useCallback(
+  const handleFileTreeDoubleClick = useCallback(
     (filePath: string) => {
       focusEditorPanel();
 
@@ -758,10 +659,6 @@ function App() {
     const projectPath = activeTabRef.current.projectPath;
     getProjectStore().getState().updateFileContent(projectPath, content);
   }, []);
-
-  const handleToggleFileTree = useCallback(() => {
-    updateSetting('ui', { fileTreeVisible: !settings.ui.fileTreeVisible });
-  }, [settings.ui.fileTreeVisible]);
 
   const handleCreateFile = useCallback(
     async (parentDir: string): Promise<string> => {
@@ -820,6 +717,10 @@ function App() {
       const newPath = parentDir ? `${parentDir}/${newName}` : newName;
 
       if (newPath === oldPath) return;
+      if (newName.includes('/') || !isValidProjectPath(newPath)) {
+        notifyError({ operation: 'rename-file', fallbackMessage: 'Choose a valid filename' });
+        return;
+      }
       if (newPath in store.files) return; // Name already taken
 
       store.renameFile(oldPath, newPath);
@@ -845,6 +746,34 @@ function App() {
     [analytics, tabs, markTabSaved, renameTab]
   );
 
+  const reconcileProjectTabs = useCallback(() => {
+    const project = getProjectStore().getState();
+    if (!Object.keys(project.files).length) project.resetToUntitledProject();
+    const current = getProjectStore().getState();
+    const workspace = getWorkspaceState();
+    const tabs = workspace.tabs.filter((tab) => {
+      if (current.files[tab.projectPath]) return true;
+      revokeBlobUrl(tab.render.previewSrc);
+      return false;
+    });
+    if (tabs.length === workspace.tabs.length) return;
+    if (!tabs.length) {
+      const path = current.renderTargetPath ?? Object.keys(current.files)[0];
+      tabs.push(
+        createWorkspaceTab({
+          projectPath: path,
+          name: path,
+          filePath: current.projectRoot ? `${current.projectRoot}/${path}` : null,
+        })
+      );
+    }
+    workspace.hydrateWorkspace({
+      tabs,
+      activeTabId: tabs.find((tab) => tab.id === workspace.activeTabId)?.id ?? tabs[0].id,
+      showWelcome: false,
+    });
+  }, []);
+
   const handleDeleteFile = useCallback(
     async (filePath: string) => {
       const platform = getPlatform();
@@ -865,24 +794,13 @@ function App() {
         await platform.deleteFile(`${store.projectRoot}/${filePath}`);
       }
 
-      // Close any open tab for this file
-      const tab = tabs.find((t) => t.projectPath === filePath);
-      if (tab) {
-        revokeBlobUrl(tab.render.previewSrc);
-        closeTabLocal(tab.id);
-      }
-
       store.removeFile(filePath);
-      analytics.track('file deleted', { had_open_tab: Boolean(tab) });
-
-      // If we deleted everything, reset to a fresh untitled project
-      const remaining = Object.keys(store.files);
-      if (remaining.length === 0) {
-        store.resetToUntitledProject();
-        createNewTab(null, undefined, DEFAULT_TAB_NAME);
-      }
+      reconcileProjectTabs();
+      analytics.track('file deleted', {
+        had_open_tab: tabs.some((tab) => tab.projectPath === filePath),
+      });
     },
-    [analytics, tabs, closeTabLocal, createNewTab]
+    [analytics, reconcileProjectTabs, tabs]
   );
 
   const handleDeleteFolder = useCallback(
@@ -916,25 +834,11 @@ function App() {
         }
       }
 
-      // Close tabs for affected files
-      for (const fp of affected) {
-        const tab = tabs.find((t) => t.projectPath === fp);
-        if (tab) {
-          revokeBlobUrl(tab.render.previewSrc);
-          closeTabLocal(tab.id);
-        }
-      }
-
       store.removeFolder(folderPath);
+      reconcileProjectTabs();
       analytics.track('folder deleted', { file_count: affected.length });
-
-      // If we deleted everything, reset to a fresh untitled project
-      if (Object.keys(store.files).length === 0) {
-        store.resetToUntitledProject();
-        createNewTab(null, undefined, DEFAULT_TAB_NAME);
-      }
     },
-    [analytics, tabs, closeTabLocal, createNewTab]
+    [analytics, reconcileProjectTabs]
   );
 
   const handleSetRenderTarget = useCallback(
@@ -1053,20 +957,6 @@ function App() {
 
   // Note: Tree-sitter formatter is initialized in main.tsx for optimal performance
 
-  // Initialize project store with the default untitled file on mount
-  useEffect(() => {
-    const state = getProjectStore().getState();
-    // Only initialize if the project store is empty (no files loaded yet)
-    if (Object.keys(state.files).length === 0) {
-      const tab = activeTabRef.current;
-      const defaultContent = '// Type your OpenSCAD code here\ncube([10, 10, 10]);';
-      // Seed the untitled web project without hydrating workspace state.
-      // Explicit file/folder opens should transition out of welcome, but the
-      // initial empty project should stay behind the welcome screen.
-      state.openProject(null, { [tab.name]: defaultContent }, tab.name);
-    }
-  }, []);
-
   // Keep refs in sync with state
   useEffect(() => {
     activeTabRef.current = activeTab;
@@ -1106,383 +996,8 @@ function App() {
   // Source-to-tab and project store sync is handled by handleEditorChange.
   // No separate sync effects needed.
 
-  // Helper function to save file to current path or prompt for new path
-  const saveProjectToDirectory = useCallback(async (): Promise<boolean> => {
-    try {
-      const platform = getPlatform();
-      const dirPath = await platform.pickDirectory();
-      if (!dirPath) return false;
-
-      const store = getProjectStore().getState();
-      const currentSettings = loadSettings();
-
-      // Write all files to the selected directory
-      for (const [relativePath, file] of Object.entries(store.files)) {
-        let content = file.content;
-
-        if (currentSettings.editor.formatOnSave) {
-          try {
-            content = await formatOpenScadCode(content, {
-              indentSize: currentSettings.editor.indentSize,
-              useTabs: currentSettings.editor.useTabs,
-            });
-            if (content !== file.content) {
-              getProjectStore().getState().updateFileContent(relativePath, content);
-              getProjectStore().getState().setCustomizerBase(relativePath, content);
-            }
-          } catch {
-            // Continue with unformatted content
-          }
-        }
-
-        const absolutePath = `${dirPath}/${relativePath}`;
-        await platform.writeTextFile(absolutePath, content);
-      }
-
-      // Transition project from virtual to disk-backed
-      const updatedStore = getProjectStore().getState();
-      updatedStore.openProject(
-        dirPath,
-        Object.fromEntries(
-          Object.entries(updatedStore.files).map(([path, file]) => [path, file.content])
-        ),
-        updatedStore.renderTargetPath ?? DEFAULT_TAB_NAME
-      );
-
-      // Update workspace tabs with their new disk paths
-      for (const tab of tabsRef.current) {
-        const absolutePath = `${dirPath}/${tab.projectPath}`;
-        markTabSaved(tab.id, { filePath: absolutePath, name: tab.name });
-      }
-
-      requestRender('save', { immediate: true });
-
-      notifySuccess('Project saved to folder', { toastId: 'save-project-dir-success' });
-      return true;
-    } catch (err) {
-      notifyError({
-        operation: 'save-project-to-directory',
-        error: err,
-        fallbackMessage: 'Failed to save project to folder',
-        toastId: 'save-project-dir-error',
-        logLabel: 'Save project to directory failed',
-      });
-      return false;
-    }
-  }, [markTabSaved]);
-
-  const saveFile = useCallback(
-    async (promptForPath: boolean = false): Promise<boolean> => {
-      try {
-        const currentTab = activeTabRef.current;
-        const platform = getPlatform();
-        const filters = OPENSCAD_FILE_FILTERS;
-
-        const store = getProjectStore().getState();
-
-        // Virtual multi-file project on desktop: redirect to folder save
-        if (
-          !promptForPath &&
-          store.projectRoot === null &&
-          Object.keys(store.files).length > 1 &&
-          platform.capabilities.hasFileSystem
-        ) {
-          return saveProjectToDirectory();
-        }
-
-        let currentSource = store.files[currentTab.projectPath]?.content ?? '';
-
-        const currentSettings = loadSettings();
-        if (currentSettings.editor.formatOnSave) {
-          try {
-            const formatted = await formatOpenScadCode(currentSource, {
-              indentSize: currentSettings.editor.indentSize,
-              useTabs: currentSettings.editor.useTabs,
-            });
-            if (formatted !== currentSource) {
-              currentSource = formatted;
-              store.updateFileContent(currentTab.projectPath, formatted);
-              store.setCustomizerBase(currentTab.projectPath, formatted);
-            }
-          } catch (err) {
-            console.error('[saveFile] Failed to format code:', err);
-          }
-        }
-
-        let savePath: string | null;
-        const suggestedName = currentTab.name || 'untitled';
-        if (promptForPath) {
-          savePath = await platform.fileSaveAs(currentSource, filters, suggestedName);
-        } else {
-          savePath = await platform.fileSave(
-            currentSource,
-            currentTab.filePath,
-            filters,
-            suggestedName
-          );
-        }
-
-        if (!savePath) return false;
-
-        const shouldNotifySaveSuccess = promptForPath || !currentTab.filePath;
-        const projectRoot = getProjectStore().getState().projectRoot;
-        const relativePath = getRelativeProjectPath(projectRoot, savePath);
-        const fileName = relativePath || savePath.split('/').pop() || savePath;
-
-        // If the file was renamed (e.g., "Untitled" → "lamp.scad"), update projectStore
-        if (fileName !== currentTab.projectPath) {
-          getProjectStore().getState().renameFile(currentTab.projectPath, fileName);
-          renameTab(currentTab.id, fileName, fileName);
-        }
-
-        markTabSaved(currentTab.id, {
-          filePath: savePath,
-          name: fileName,
-        });
-        getProjectStore().getState().markFileSaved(fileName, currentSource);
-
-        const dockPanel = getDockviewApi()?.getPanel(currentTab.id);
-        if (dockPanel) {
-          dockPanel.api.setTitle(savePath.split('/').pop() || fileName);
-        }
-
-        addRecentFile(savePath);
-
-        requestRender('save', { immediate: true });
-
-        analytics.track('file saved', {
-          source: promptForPath ? 'save_as' : 'save',
-          had_existing_path: Boolean(currentTab.filePath),
-          format_on_save: currentSettings.editor.formatOnSave,
-          render_after_save: true,
-        });
-
-        if (shouldNotifySaveSuccess) {
-          notifySuccess('File saved successfully', {
-            toastId: 'save-success',
-          });
-        }
-
-        return true;
-      } catch (err) {
-        notifyError({
-          operation: 'save-file',
-          error: err,
-          fallbackMessage: 'Failed to save file',
-          toastId: 'save-file-error',
-          logLabel: '[saveFile] Save failed',
-        });
-        return false;
-      }
-    },
-    [analytics, markTabSaved, renameTab, saveProjectToDirectory]
-  );
-
-  const saveAllFiles = useCallback(async () => {
-    const store = getProjectStore().getState();
-    const platform = getPlatform();
-    const currentSettings = loadSettings();
-    const filters = OPENSCAD_FILE_FILTERS;
-    let savedCount = 0;
-
-    for (const [relativePath, file] of Object.entries(store.files)) {
-      if (!file.isDirty) continue;
-
-      let content = file.content;
-
-      // Auto-format on save if enabled
-      if (currentSettings.editor.formatOnSave) {
-        try {
-          const formatted = await formatOpenScadCode(content, {
-            indentSize: currentSettings.editor.indentSize,
-            useTabs: currentSettings.editor.useTabs,
-          });
-          if (formatted !== content) {
-            content = formatted;
-            getProjectStore().getState().updateFileContent(relativePath, formatted);
-            getProjectStore().getState().setCustomizerBase(relativePath, formatted);
-          }
-        } catch {
-          // Continue with unformatted content
-        }
-      }
-
-      // Build absolute path for desktop projects
-      const absolutePath = store.projectRoot ? `${store.projectRoot}/${relativePath}` : null;
-
-      const savePath = await platform.fileSave(content, absolutePath, filters, relativePath);
-      if (savePath) {
-        getProjectStore().getState().markFileSaved(relativePath, content);
-
-        // Update matching workspace tab if one exists
-        const tab = tabsRef.current.find((t) => t.projectPath === relativePath);
-        if (tab) {
-          markTabSaved(tab.id, { filePath: savePath, name: tab.name });
-        }
-        savedCount++;
-      }
-    }
-
-    if (savedCount > 0) {
-      requestRender('save', { immediate: true });
-      notifySuccess(`Saved ${savedCount} file${savedCount > 1 ? 's' : ''}`, {
-        toastId: 'save-all-success',
-      });
-    }
-  }, [markTabSaved]);
-
-  // Track whether the user explicitly chose a directory (persisted setting
-  // or ephemeral welcome-screen pick). When true, we use the directory
-  // directly instead of creating a random-named subdirectory.
-  const [hasEphemeralProjectDir, setHasEphemeralProjectDir] = useState(false);
-  const hasCustomProjectDir = !!settings.project.defaultProjectDirectory || hasEphemeralProjectDir;
-  const displayProjectDir = resolvedProjectDir
-    ? hasCustomProjectDir
-      ? resolvedProjectDir
-      : `${resolvedProjectDir}/${pendingProjectName}`
-    : null;
-
-  /**
-   * On desktop, create a project directory on disk and transition the project
-   * from virtual to disk-backed. Returns the created directory path, or null
-   * if on web or if directory creation failed.
-   */
-  const initProjectDirectory = useCallback(async (): Promise<string | null> => {
-    if (!capabilities.hasFileSystem || !resolvedProjectDir) return null;
-
-    const platform = getPlatform();
-    let dirPath: string | null;
-
-    if (hasCustomProjectDir) {
-      dirPath = resolvedProjectDir;
-    } else {
-      // Default base dir — create a random-named subdirectory
-      dirPath = await platform.createProjectDirectory(resolvedProjectDir, pendingProjectName);
-      // Generate a fresh name for the next project
-      setPendingProjectName(generateRandomProjectName());
-
-      if (!dirPath) return null;
-    }
-    if (!dirPath) return null;
-
-    await openWorkspaceFolderInWindow(dirPath, {
-      createIfEmpty: true,
-    });
-
-    return dirPath;
-  }, [capabilities.hasFileSystem, resolvedProjectDir, pendingProjectName, hasCustomProjectDir]);
-
-  const handleStartWithDraft = useCallback(
-    (draftOverride?: AiDraft) => {
-      if (draftOverride) {
-        setDraft(draftOverride);
-      }
-      hideWelcomeScreen();
-
-      // Create project directory before submitting AI draft
-      void initProjectDirectory().then(() => {
-        void submitDraft(draftOverride);
-      });
-    },
-    [hideWelcomeScreen, setDraft, submitDraft, initProjectDirectory]
-  );
-
-  const handleStartManually = useCallback(() => {
-    hideWelcomeScreen();
-    void initProjectDirectory();
-  }, [hideWelcomeScreen, initProjectDirectory]);
-
-  const handleChangeProjectDirectory = useCallback(async () => {
-    const platform = getPlatform();
-    const picked = await platform.pickDirectory();
-    if (picked) {
-      setResolvedProjectDir(picked);
-      setHasEphemeralProjectDir(true);
-    }
-  }, []);
-
-  const openWorkspaceFolderInCurrentWindow = useCallback(
-    async (
-      dirPath: string,
-      options: {
-        createIfEmpty?: boolean;
-        source?: 'recent' | 'menu_open';
-      } = {}
-    ) => {
-      setIsProjectLoading(true);
-      try {
-        const result = await openWorkspaceFolderInWindow(dirPath, {
-          createIfEmpty: options.createIfEmpty,
-        });
-
-        if (options.source) {
-          analytics.track('folder opened', {
-            source: options.source,
-            file_count: result.fileCount,
-            created_default_file: result.createdDefaultFile,
-          });
-        }
-
-        return result;
-      } finally {
-        setIsProjectLoading(false);
-      }
-    },
-    [analytics]
-  );
-
-  const openFileInCurrentWindow = useCallback(
-    async (
-      result: { path: string | null; name: string; content: string },
-      options: {
-        source?: 'open' | 'menu_open' | 'recent';
-      } = {}
-    ) => {
-      setIsProjectLoading(true);
-      try {
-        const openResult = await openFileInWindow(result);
-
-        if (options.source) {
-          analytics.track('file opened', {
-            source: options.source,
-            has_disk_path: Boolean(result.path),
-            reused_existing_tab: openResult.reusedExistingTab,
-            replaced_welcome_tab: !openResult.reusedExistingTab,
-          });
-        }
-
-        return openResult;
-      } finally {
-        setIsProjectLoading(false);
-      }
-    },
-    [analytics]
-  );
-
-  const handleHeaderLayoutSelect = useCallback(
-    (preset: HeaderLayoutPreset) => {
-      const changed = settings.ui.defaultLayoutPreset !== preset;
-
-      updateSetting('ui', {
-        hasCompletedNux: true,
-        defaultLayoutPreset: preset,
-      });
-
-      if (changed) {
-        analytics.track('workspace layout selected', {
-          layout: preset,
-          source: 'header' satisfies LayoutSelectionSource,
-          is_first_run: false,
-        });
-      }
-
-      applyWorkspacePreset(preset);
-    },
-    [analytics, settings.ui.defaultLayoutPreset]
-  );
-
   const handleOpenCustomizerAiRefine = useCallback(() => {
-    openPanel('ai-chat', 'ai-chat', 'AI');
+    openPanel('ai-chat');
     window.setTimeout(() => {
       aiPromptPanelRef.current?.focusPrompt();
     }, 0);
@@ -1496,7 +1011,7 @@ function App() {
 
   const attachViewerAnnotationFile = useCallback<WorkspaceState['attachViewerAnnotationFile']>(
     async (file) => {
-      openPanel('ai-chat', 'ai-chat', 'AI');
+      openPanel('ai-chat');
 
       if (!hasCurrentModelApiKey) {
         setSettingsInitialTab('ai');
@@ -1527,7 +1042,7 @@ function App() {
 
   const attachViewerComment = useCallback<WorkspaceState['attachViewerComment']>(
     async (comment) => {
-      openPanel('ai-chat', 'ai-chat', 'AI');
+      openPanel('ai-chat');
       if (!hasCurrentModelApiKey) {
         setSettingsInitialTab('ai');
         setShowSettingsDialog(true);
@@ -1542,10 +1057,6 @@ function App() {
     [addDraftComment, canAttachViewerAnnotation, hasCurrentModelApiKey]
   );
 
-  const handleOpenEditorPanel = useCallback(() => {
-    focusEditorPanel();
-  }, [focusEditorPanel]);
-
   const handleOpenExportDialog = useCallback(() => {
     setShowExportDialog(true);
   }, []);
@@ -1557,205 +1068,184 @@ function App() {
     setShowShareDialog(true);
   }, []);
 
-  const handleOpenRecent = useCallback(
-    async (path: string, type?: 'file' | 'folder') => {
-      try {
-        // Handle recent folders by opening the directory
-        // Also detect legacy entries without type field by checking extension
-        if (type === 'folder' || !isOpenScadProjectFilePath(path)) {
-          const platform = getPlatform();
-          if (!platform.capabilities.hasFileSystem) return 'cancelled' as const;
-          await openWorkspaceFolderInCurrentWindow(path, { source: 'recent' });
-          return 'opened' as const;
-        }
-
-        const existingTab = tabs.find((t) => t.filePath === path);
-        if (existingTab) {
-          await switchTab(existingTab.id);
-          hideWelcomeScreen();
-          analytics.track('file opened', {
-            source: 'recent',
-            has_disk_path: true,
-            reused_existing_tab: true,
-            replaced_welcome_tab: false,
-          });
-          return 'opened' as const;
-        }
-
-        // On web, recent files won't have real paths — this is a Tauri-only feature
-        // but we keep the interface for compatibility
-        const platform = getPlatform();
-        if (!platform.capabilities.hasFileSystem) {
-          notifyError({
-            operation: 'open-recent-file',
-            fallbackMessage: 'Cannot open recent files in web mode',
-            toastId: 'open-recent-file-error',
-          });
-          return 'cancelled' as const;
-        }
-
-        const result = await platform.fileRead(path);
-        if (!result) return 'cancelled' as const;
-
-        await openFileInCurrentWindow(result, { source: 'recent' });
-        return 'opened' as const;
-      } catch (err) {
-        removeRecentFile(path);
-        const normalized = normalizeAppError(err, 'Failed to open file');
-        const isMissingFile =
-          normalized.message.toLowerCase().includes('no such file') ||
-          normalized.message.toLowerCase().includes('not found');
-
-        notifyError({
-          operation: 'open-recent-file',
-          error: err,
-          fallbackMessage: isMissingFile
-            ? 'File no longer exists. Removed from Recent Files.'
-            : 'Failed to open file',
-          toastId: 'open-recent-file-error',
-          logLabel: 'Failed to open recent file',
-        });
-        return 'removed' as const;
-      }
-    },
-    [
-      analytics,
-      hideWelcomeScreen,
-      openWorkspaceFolderInCurrentWindow,
-      openFileInCurrentWindow,
-      switchTab,
-      tabs,
-    ]
-  );
-
-  const handleOpenFile = useCallback(async () => {
-    try {
-      const result = await getPlatform().fileOpen(OPENSCAD_FILE_FILTERS);
-      if (!result) return;
-      await openFileInCurrentWindow(result, { source: 'open' });
-    } catch (err) {
-      notifyError({
-        operation: 'open-file',
-        error: err,
-        fallbackMessage: 'Failed to open file',
-        toastId: 'open-file-error',
-        logLabel: 'Failed to open file',
-      });
-    }
-  }, [openFileInCurrentWindow]);
-
-  // Helper function to check for unsaved changes before destructive operations
-  // Returns: true if ok to proceed, false if user wants to cancel
-  const checkUnsavedChangesRef = useRef<() => Promise<boolean>>();
-
-  checkUnsavedChangesRef.current = async (): Promise<boolean> => {
-    const file = getProjectStore().getState().files[activeTabRef.current.projectPath];
-    // Compare content directly rather than relying on isDirty — virtual files
-    // (web) keep isDirty false to suppress UI indicators, but we still want to
-    // warn before discarding in-memory edits.
-    const hasUnsavedEdits = file ? file.content !== file.savedContent : false;
-    if (!hasUnsavedEdits) return true;
-
-    const platform = getPlatform();
-
-    const wantsToSave = await platform.ask('Do you want to save the changes you made?', {
-      title: 'Unsaved Changes',
-      kind: 'warning',
-      okLabel: 'Save',
-      cancelLabel: "Don't Save",
-    });
-
-    if (wantsToSave) {
-      return await saveFile(false);
-    } else {
-      const confirmDiscard = await platform.confirm(
-        'Are you sure you want to discard your changes?',
-        {
-          title: 'Discard Changes',
-          kind: 'warning',
-          okLabel: 'Discard',
-          cancelLabel: 'Cancel',
-        }
-      );
-      return confirmDiscard;
-    }
-  };
-
   useEffect(() => {
-    const unlistenFns: Array<() => void> = [];
-
-    unlistenFns.push(
+    const unlistenFns = [
       eventBus.on('menu:file:new', async () => {
-        const canProceed = checkUnsavedChangesRef.current
-          ? await checkUnsavedChangesRef.current()
-          : true;
-        if (!canProceed) return;
-
-        getProjectStore().getState().resetToUntitledProject();
-        createNewTab();
-        showWelcomeScreen();
-      })
-    );
-
-    unlistenFns.push(
+        if (!(await confirmProjectReplacement())) return;
+        replaceProjectDocument(
+          createProjectDocument({ [DEFAULT_TAB_NAME]: DEFAULT_OPENSCAD_CODE }, DEFAULT_TAB_NAME)
+        );
+        requestRender('file_open', { immediate: true });
+      }),
+      eventBus.on('menu:file:new_file', () => {
+        void handleCreateFile('')
+          .then(focusEditorPanel)
+          .catch((error) =>
+            notifyError({
+              operation: 'new-file',
+              error,
+              fallbackMessage: 'Could not create the file',
+            })
+          );
+      }),
       eventBus.on('menu:file:open', async () => {
         try {
-          const result = await getPlatform().fileOpen(OPENSCAD_FILE_FILTERS);
-          if (!result) return;
-          await openFileInCurrentWindow(result, { source: 'menu_open' });
-        } catch (err) {
+          const platform = getPlatform();
+          const selected = await platform.fileOpen(OPENSCAD_FILE_FILTERS);
+          if (!selected) return;
+          if (!isOpenScadProjectFilePath(selected.name) || !isValidProjectPath(selected.name))
+            throw new Error('Choose a .scad or .h file with a valid filename.');
+          const project = getProjectStore().getState();
+          const { path, reuse } = importProjectSource(
+            project.files,
+            selected.name,
+            selected.content,
+            project.emptyFolders
+          );
+          const absolutePath = project.projectRoot ? `${project.projectRoot}/${path}` : null;
+          if (!reuse) {
+            const epoch = getProjectEpoch();
+            if (absolutePath) {
+              if (await platform.fileExists(absolutePath))
+                throw new Error('A file with this name already exists in the workspace folder.');
+              await platform.writeTextFile(absolutePath, selected.content);
+            }
+            if (epoch !== getProjectEpoch()) return;
+            project.addFile(path, selected.content);
+            if (absolutePath) project.markFileSaved(path, selected.content);
+          }
+          const tab = getWorkspaceState().tabs.find((candidate) => candidate.projectPath === path);
+          if (tab) setActiveTab(tab.id);
+          else createNewTab(absolutePath, undefined, path);
+          focusEditorPanel();
+          analytics.track('file opened', {
+            source: 'menu_open',
+            has_disk_path: Boolean(selected.path),
+          });
+        } catch (error) {
           notifyError({
             operation: 'open-file',
-            error: err,
-            fallbackMessage: 'Failed to open file',
-            toastId: 'open-file-error',
-            logLabel: 'Open failed',
+            error,
+            fallbackMessage: 'Could not open the file',
           });
         }
-      })
-    );
-
-    unlistenFns.push(
-      eventBus.on('menu:file:open_folder', async () => {
+      }),
+      eventBus.on('menu:file:open_project', async () => {
+        setIsProjectLoading(true);
         try {
-          const canProceed = checkUnsavedChangesRef.current
-            ? await checkUnsavedChangesRef.current()
-            : true;
-          if (!canProceed) return;
-
-          const platform = getPlatform();
-          const dirPath = await platform.pickDirectory();
-          if (!dirPath) return;
-          await openWorkspaceFolderInCurrentWindow(dirPath, { source: 'menu_open' });
-        } catch (err) {
+          const selected = await pickProjectArchive();
+          if (!selected) return;
+          const { document, legacy } = decodeProjectArchive(selected.bytes, selected.name);
+          const importing = legacy || selected.name.toLowerCase().endsWith('.zip');
+          if (!(await confirmProjectReplacement())) return;
+          replaceProjectDocument(document, {
+            name: importing
+              ? selected.name.replace(/\.zip$/i, `.${PROJECT_EXTENSION}`)
+              : selected.name,
+            destination: importing ? null : selected.destination,
+            dirty: importing,
+          });
+          requestRender('file_open', { immediate: true });
+        } catch (error) {
           notifyError({
-            operation: 'open-folder',
-            error: err,
-            fallbackMessage: 'Failed to open folder',
-            toastId: 'open-folder-error',
-            logLabel: 'Open folder failed',
+            operation: 'open-project',
+            error,
+            fallbackMessage: 'Could not open the project',
+          });
+        } finally {
+          setIsProjectLoading(false);
+        }
+      }),
+      eventBus.on('menu:file:open_folder', async () => {
+        setIsProjectLoading(true);
+        try {
+          const platform = getPlatform();
+          let name: string | undefined;
+          let emptyFolders: string[] = [];
+          let result;
+          if (platform.capabilities.hasFileSystem) {
+            const folder = await platform.pickDirectory();
+            if (!folder) return;
+            name = folder.split(/[/\\]/).filter(Boolean).pop();
+            const files = await platform.readDirectoryFiles(
+              folder,
+              [...OPENSCAD_PROJECT_FILE_EXTENSIONS],
+              true
+            );
+            emptyFolders = findEmptyFolders(
+              await platform.readSubdirectories(folder),
+              Object.keys(files)
+            );
+            result = resolveFolderImport(files, { workspaceName: name });
+          } else {
+            result = await pickFolder();
+            if (!result) return;
+            name = result.name;
+          }
+          if (!result) throw new Error('The folder has no renderable .scad files.');
+          if (!(await confirmProjectReplacement())) return;
+          replaceProjectDocument(
+            createProjectDocument(result.files, result.renderTargetPath, emptyFolders),
+            {
+              name: name ? `${name}.${PROJECT_EXTENSION}` : undefined,
+              dirty: true,
+            }
+          );
+          requestRender('file_open', { immediate: true });
+        } catch (error) {
+          notifyError({
+            operation: 'import-folder',
+            error,
+            fallbackMessage: 'Could not import the folder',
+          });
+        } finally {
+          setIsProjectLoading(false);
+        }
+      }),
+      eventBus.on('menu:file:save', () => void saveProject()),
+      eventBus.on('menu:file:save_as', () => void saveProject(true)),
+      eventBus.on('menu:file:export_source', async () => {
+        try {
+          const workspace = getWorkspaceState();
+          const tab = workspace.tabs.find(({ id }) => id === workspace.activeTabId);
+          const file = tab && getProjectStore().getState().files[tab.projectPath];
+          if (!tab || !file) return;
+          const name = tab.projectPath.split('/').pop() ?? tab.name;
+          await getPlatform().fileExport(
+            new TextEncoder().encode(file.content),
+            name,
+            OPENSCAD_FILE_FILTERS
+          );
+        } catch (error) {
+          notifyError({
+            operation: 'export-source',
+            error,
+            fallbackMessage: 'Could not export the file',
           });
         }
-      })
-    );
-
-    unlistenFns.push(
-      eventBus.on('menu:file:save', async () => {
-        await saveFile(false);
-      })
-    );
-
-    unlistenFns.push(
-      eventBus.on('menu:file:save_as', async () => {
-        await saveFile(true);
-      })
-    );
-
-    unlistenFns.push(
-      eventBus.on('menu:file:save_all', async () => {
-        await saveAllFiles();
-      })
-    );
+      }),
+      eventBus.on('menu:file:export_all', async () => {
+        try {
+          await getPlatform().fileExport(
+            exportProjectSources(captureProjectDocument()),
+            projectName.replace(/\.[^.]+$/, '') + '.zip',
+            [{ name: 'ZIP Archive', extensions: ['zip'] }]
+          );
+        } catch (error) {
+          notifyError({
+            operation: 'export-sources',
+            error,
+            fallbackMessage: 'Could not export the source files',
+          });
+        }
+      }),
+      eventBus.on('menu:window:open_panel', (panelId: WorkspacePanelId) => {
+        openPanel(panelId);
+      }),
+      eventBus.on('menu:window:reset_workspace', () => {
+        resetLayout();
+      }),
+    ];
 
     unlistenFns.push(
       eventBus.on('menu:file:export', async (format: ExportFormat) => {
@@ -1796,108 +1286,38 @@ function App() {
       })
     );
 
-    unlistenFns.push(
-      eventBus.on('menu:file:save_project', async () => {
-        try {
-          const state = getProjectStore().getState();
-          if (!state.renderTargetPath) return;
-          const files: Record<string, string> = {};
-          for (const [path, file] of Object.entries(state.files)) {
-            files[path] = file.content;
-          }
-          const blob = exportProjectZip({
-            files,
-            renderTargetPath: state.renderTargetPath,
-          });
-          const data = new Uint8Array(await blob.arrayBuffer());
-          await getPlatform().fileExport(data, 'project.zip', [
-            { name: 'ZIP Archive', extensions: ['zip'] },
-          ]);
-          analytics.track('project exported', { file_count: Object.keys(files).length });
-          notifySuccess('Project saved', { toastId: 'save-project-success' });
-        } catch (err) {
-          notifyError({
-            operation: 'save-project',
-            error: err,
-            fallbackMessage: 'Failed to save project',
-            toastId: 'save-project-error',
-            logLabel: 'Save project failed',
-          });
-        }
-      })
-    );
-
-    unlistenFns.push(
-      eventBus.on('menu:file:open_project', async () => {
-        try {
-          const canProceed = checkUnsavedChangesRef.current
-            ? await checkUnsavedChangesRef.current()
-            : true;
-          if (!canProceed) return;
-
-          const result = await pickFolder();
-          if (!result) return;
-
-          getProjectStore().getState().openProject(null, result.files, result.renderTargetPath);
-          createNewTab(null, result.files[result.renderTargetPath], result.renderTargetPath);
-          hideWelcomeScreen();
-          analytics.track('project imported', { file_count: Object.keys(result.files).length });
-          notifySuccess(`Opened project with ${Object.keys(result.files).length} files`, {
-            toastId: 'open-project-success',
-          });
-
-          requestRender('file_open', { immediate: true });
-        } catch (err) {
-          notifyError({
-            operation: 'open-project',
-            error: err,
-            fallbackMessage: 'Failed to open project',
-            toastId: 'open-project-error',
-            logLabel: 'Open project failed',
-          });
-        }
-      })
-    );
-
-    return () => {
-      unlistenFns.forEach((fn) => fn());
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => unlistenFns.forEach((unlisten) => unlisten());
   }, [
     analytics,
+    confirmProjectReplacement,
     createNewTab,
-    hideWelcomeScreen,
-    openFileInCurrentWindow,
-    openWorkspaceFolderInCurrentWindow,
-    saveAllFiles,
-    showWelcomeScreen,
+    focusEditorPanel,
+    handleCreateFile,
+    projectName,
+    saveProject,
+    setActiveTab,
   ]);
 
   useEffect(() => {
     const platform = getPlatform();
-    const unlisten = platform.onCloseRequested(async () => {
-      const projectFiles = getProjectStore().getState().files;
-      const anyDirty = Object.values(projectFiles).some((f) => f.isDirty);
-      if (!anyDirty) return true;
-      return checkUnsavedChangesRef.current ? await checkUnsavedChangesRef.current() : true;
+    if (!platform.capabilities.hasFileSystem) return;
+    return platform.onCloseRequested(async () => {
+      if (await flushProjectRecovery()) return true;
+      return platform.confirm('Workspace recovery failed. Close anyway?', {
+        title: 'Workspace Recovery',
+        okLabel: 'Close',
+        cancelLabel: 'Cancel',
+      });
     });
-
-    return () => {
-      unlisten();
-    };
-  }, []);
-
-  const activeFileDirty = useProjectStore((s) => s.files[activeTab.projectPath]?.isDirty ?? false);
-  const anyFileDirty = useProjectStore((s) => Object.values(s.files).some((f) => f.isDirty));
+  }, [capabilities.hasFileSystem]);
 
   useEffect(() => {
     const workspaceName = projectRoot
       ? (projectRoot.split('/').filter(Boolean).pop() ?? activeTab.name)
-      : activeTab.filePath
-        ? activeTab.name
-        : 'Untitled Project';
-    const dirtyIndicator = activeFileDirty ? '\u2022 ' : '';
-    const title = `${dirtyIndicator}${workspaceName} - OpenSCAD Studio`;
+      : projectName === `untitled.${PROJECT_EXTENSION}`
+        ? 'Untitled Project'
+        : projectName.replace(/\.[^.]+$/, '');
+    const title = `${projectDirty ? '\u2022 ' : ''}${workspaceName} - OpenSCAD Studio`;
     getPlatform().setWindowTitle(title);
 
     if (capabilities.hasFileSystem) {
@@ -1912,21 +1332,14 @@ function App() {
       });
     }
   }, [
-    activeFileDirty,
-    activeTab.filePath,
     activeTab.name,
     capabilities.hasFileSystem,
+    projectDirty,
+    projectName,
     projectRoot,
     renderTargetPath,
     showWelcome,
   ]);
-
-  useEffect(() => {
-    const platform = getPlatform();
-    if ('setDirtyState' in platform) {
-      (platform as { setDirtyState: (d: boolean) => void }).setDirtyState(anyFileDirty);
-    }
-  }, [anyFileDirty]);
 
   // Watch project directory for external file changes (desktop only)
   useEffect(() => {
@@ -1935,14 +1348,17 @@ function App() {
     if (!platform.capabilities.hasFileSystem) return;
 
     let unwatchFn: (() => void) | null = null;
+    let disposed = false;
 
     platform
       .watchDirectory(projectRoot, (relativePath, content) => {
         const store = getProjectStore().getState();
+        if (disposed || store.projectRoot !== projectRoot) return;
         if (content === null) {
           // File was deleted externally — only remove if it exists and isn't dirty
           if (relativePath in store.files && !store.files[relativePath].isDirty) {
             store.removeFile(relativePath);
+            reconcileProjectTabs();
           }
           return;
         }
@@ -1959,13 +1375,18 @@ function App() {
         }
       })
       .then((fn) => {
-        unwatchFn = fn;
+        if (disposed) fn();
+        else unwatchFn = fn;
+      })
+      .catch((error) => {
+        if (!disposed) console.warn('[App] Could not watch the workspace folder', error);
       });
 
     return () => {
+      disposed = true;
       unwatchFn?.();
     };
-  }, [projectRoot]);
+  }, [projectRoot, reconcileProjectTabs]);
 
   useEffect(() => {
     const unlisten = eventBus.on('render-requested', ({ source }) => {
@@ -1977,11 +1398,10 @@ function App() {
   useEffect(() => {
     const unlisten = eventBus.on('code-updated', ({ code, source: eventSource }) => {
       const store = getProjectStore().getState();
-      // Customizer changes target the render target file, not the active editor
-      // tab — the user may be viewing a different file while the customizer
-      // operates on the render target.
+      // AI edits and customizer changes address the render target. The editor
+      // may be showing another project file.
       const projectPath =
-        eventSource === 'customizer'
+        eventSource === 'customizer' || eventSource === 'ai'
           ? (store.renderTargetPath ?? activeTabRef.current.projectPath)
           : activeTabRef.current.projectPath;
       store.updateFileContent(projectPath, code);
@@ -2013,10 +1433,22 @@ function App() {
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (confirmingReplacement) return;
+      if (!capabilities.hasNativeMenu && (e.metaKey || e.ctrlKey) && !e.defaultPrevented) {
+        const key = e.key.toLowerCase();
+        if (key === 'n' && !e.shiftKey) {
+          e.preventDefault();
+          eventBus.emit('menu:file:new');
+        }
+        if (key === 'o') {
+          e.preventDefault();
+          eventBus.emit(e.shiftKey ? 'menu:file:open_project' : 'menu:file:open');
+        }
+      }
       // ⌘K or Ctrl+K to focus AI prompt
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
-        openPanel('ai-chat', 'ai-chat', 'AI');
+        openPanel('ai-chat');
         setTimeout(() => {
           aiPromptPanelRef.current?.focusPrompt();
         }, 0);
@@ -2029,23 +1461,27 @@ function App() {
       // ⌘T or Ctrl+T for new tab
       if ((e.metaKey || e.ctrlKey) && e.key === 't') {
         e.preventDefault();
-        createNewTab();
+        eventBus.emit('menu:file:new_file');
       }
       // ⌘W or Ctrl+W to close tab
       if ((e.metaKey || e.ctrlKey) && e.key === 'w') {
         e.preventDefault();
         closeTab(activeTabId);
       }
-      // ⌘⌥S or Ctrl+Alt+S to save all
-      if ((e.metaKey || e.ctrlKey) && e.altKey && e.key === 's') {
+      if (
+        !capabilities.hasNativeMenu &&
+        (e.metaKey || e.ctrlKey) &&
+        e.key.toLowerCase() === 's' &&
+        !e.defaultPrevented
+      ) {
         e.preventDefault();
-        eventBus.emit('menu:file:save_all');
+        eventBus.emit(e.shiftKey ? 'menu:file:save_as' : 'menu:file:save');
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [createNewTab, closeTab, activeTabId]);
+  }, [capabilities.hasNativeMenu, closeTab, activeTabId, confirmingReplacement]);
 
   useEffect(() => {
     if (aiError) {
@@ -2097,36 +1533,23 @@ function App() {
     };
   }, []);
 
-  const onDockviewReady = useCallback(
-    (event: DockviewReadyEvent) => {
-      const { api } = event;
-      setDockviewApi(api);
+  const onDockviewReady = useCallback((event: DockviewReadyEvent) => {
+    const { api } = event;
+    const layoutMode = getLayoutMode();
+    setDockviewApi(api);
 
-      const savedPreset = loadSettings().ui.defaultLayoutPreset;
-      const layoutMode =
-        typeof window !== 'undefined' && window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY).matches
-          ? 'mobile'
-          : 'desktop';
-      const sharePreset = isShareEntry && shareContext ? shareContext.mode : null;
+    if (!restoreLayout(api, layoutMode)) {
+      addDefaultPanels(api, layoutMode);
+    }
 
-      if (!sharePreset) {
-        clearSavedLayout();
-      }
-
-      addPresetPanels(api, sharePreset ?? savedPreset, layoutMode);
-
-      let timer: ReturnType<typeof setTimeout> | null = null;
-      if (!sharePreset) {
-        api.onDidLayoutChange(() => {
-          if (timer) clearTimeout(timer);
-          timer = setTimeout(() => {
-            saveLayout();
-          }, 300);
-        });
-      }
-    },
-    [isShareEntry, shareContext]
-  );
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    api.onDidLayoutChange(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        saveLayout(layoutMode);
+      }, 300);
+    });
+  }, []);
 
   const workspaceState: WorkspaceState = useMemo(
     () => ({
@@ -2140,8 +1563,17 @@ function App() {
       activeTabId,
       onTabClick: switchTab,
       onTabClose: closeTab,
-      onNewTab: () => createNewTab(),
+      onNewTab: () => eventBus.emit('menu:file:new_file'),
       onReorderTabs: reorderTabs,
+      onFileDoubleClick: handleFileTreeDoubleClick,
+      onRenameFile: handleRenameFile,
+      onDeleteFile: handleDeleteFile,
+      onDeleteFolder: handleDeleteFolder,
+      onSetRenderTarget: handleSetRenderTarget,
+      onCreateFile: handleCreateFile,
+      onCreateFolder: handleCreateFolder,
+      onMoveItem: handleMoveItem,
+      onAddExternalFiles: handleAddExternalFiles,
       previewSrc: activePreviewSrc,
       previewKind: activePreviewKind,
       previewCommentContext: {
@@ -2186,6 +1618,10 @@ function App() {
       rejectDiff,
       clearAiError,
       newConversation,
+      selectConversation,
+      conversationList,
+      currentConversationId,
+      interrupted,
       setCurrentModel,
       handleRestoreCheckpoint,
       aiPromptPanelRef,
@@ -2196,7 +1632,6 @@ function App() {
         setShowSettingsDialog(true);
       },
       onOpenCustomizerAiRefine: handleOpenCustomizerAiRefine,
-      onOpenEditorPanel: handleOpenEditorPanel,
       onOpenExportDialog: handleOpenExportDialog,
     }),
     [
@@ -2210,8 +1645,16 @@ function App() {
       activeTabId,
       switchTab,
       closeTab,
-      createNewTab,
       reorderTabs,
+      handleFileTreeDoubleClick,
+      handleRenameFile,
+      handleDeleteFile,
+      handleDeleteFolder,
+      handleSetRenderTarget,
+      handleCreateFile,
+      handleCreateFolder,
+      handleMoveItem,
+      handleAddExternalFiles,
       activePreviewSrc,
       activePreviewKind,
       activeRenderArtifact,
@@ -2256,15 +1699,17 @@ function App() {
       rejectDiff,
       clearAiError,
       newConversation,
+      selectConversation,
+      conversationList,
+      currentConversationId,
+      interrupted,
       setCurrentModel,
       handleRestoreCheckpoint,
       handleOpenCustomizerAiRefine,
-      handleOpenEditorPanel,
       handleOpenExportDialog,
     ]
   );
 
-  const shouldShowWelcome = showWelcome && !isShareEntry;
   const canUseShare = !capabilities.hasNativeMenu && isShareEnabled();
   const shouldShowShareBanner = Boolean(
     shareOrigin && sharePhase === 'ready' && !isShareBannerDismissed
@@ -2332,58 +1777,6 @@ function App() {
         </div>
       </div>
     </div>
-  ) : shouldShowWelcome ? (
-    <div
-      className="h-screen"
-      data-testid="welcome-container"
-      style={{ backgroundColor: 'var(--bg-primary)' }}
-    >
-      <WelcomeScreen
-        draft={draft}
-        attachments={attachments}
-        draftErrors={draftErrors}
-        draftVisionBlockMessage={draftVisionBlockMessage}
-        draftVisionWarningMessage={draftVisionWarningMessage}
-        canSubmitDraft={canSubmitDraft}
-        isProcessingAttachments={isProcessingAttachments}
-        onDraftTextChange={setDraftText}
-        onDraftFilesSelected={(files) => {
-          void addDraftFiles(files);
-        }}
-        onDraftRemoveAttachment={removeDraftAttachment}
-        onDraftRemoveComment={removeDraftComment}
-        onStartWithDraft={handleStartWithDraft}
-        onStartManually={handleStartManually}
-        onOpenRecent={handleOpenRecent}
-        onOpenFile={handleOpenFile}
-        onOpenFolder={() => {
-          eventBus.emit(
-            capabilities.hasFileSystem ? 'menu:file:open_folder' : 'menu:file:open_project'
-          );
-        }}
-        showRecentFiles={capabilities.hasFileSystem}
-        currentProvider={currentProvider}
-        currentModel={currentModel}
-        availableProviders={availableProviders}
-        onModelChange={setCurrentModel}
-        onOpenSettings={() => {
-          setSettingsInitialTab('ai');
-          setShowSettingsDialog(true);
-        }}
-        projectDirectory={displayProjectDir}
-        onChangeProjectDirectory={handleChangeProjectDirectory}
-        hasCustomProjectDirectory={hasCustomProjectDir}
-      />
-      <SettingsDialog
-        isOpen={showSettingsDialog}
-        onClose={() => {
-          setShowSettingsDialog(false);
-          setSettingsInitialTab(undefined);
-          loadModelAndProviders();
-        }}
-        initialTab={settingsInitialTab}
-      />
-    </div>
   ) : (
     <div
       className="h-screen flex flex-col"
@@ -2404,20 +1797,10 @@ function App() {
             onSettings={() => setShowSettingsDialog(true)}
             onUndo={handleUndo}
             onRedo={handleRedo}
-            hasMultipleFiles={hasMultipleFiles}
           />
         )}
 
         <div className="flex-1" />
-
-        {!isMobile && !isHeaderWorkspaceSwitcherHidden && (
-          <div className="absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2">
-            <HeaderWorkspaceControls
-              layoutPreset={settings.ui.defaultLayoutPreset}
-              onLayoutPresetChange={handleHeaderLayoutSelect}
-            />
-          </div>
-        )}
 
         <div className="flex items-center gap-1.5 px-3 py-1 shrink-0">
           {(isRendering || isProjectLoading) && (
@@ -2485,26 +1868,6 @@ function App() {
             style={{ width: '1px', height: '16px', backgroundColor: 'var(--border-secondary)' }}
           />
 
-          {!capabilities.hasNativeMenu && !isMobile && (
-            <>
-              <HeaderIconLink
-                href={REPOSITORY_URL}
-                title="View GitHub Repository"
-                ariaLabel="View GitHub Repository"
-                openInNewTab
-              >
-                <TbBrandGithub size={15} />
-              </HeaderIconLink>
-              <HeaderIconLink
-                href={macDownloadUrl}
-                title="Download for Mac"
-                ariaLabel="Download for Mac"
-              >
-                <TbDownload size={15} />
-              </HeaderIconLink>
-            </>
-          )}
-
           <IconButton
             data-testid="settings-button"
             onClick={() => setShowSettingsDialog(true)}
@@ -2525,25 +1888,7 @@ function App() {
         />
       )}
 
-      <div className="flex-1 overflow-hidden flex">
-        {!isMobile && (
-          <FileTreePanel
-            activeFilePath={activeTab.projectPath}
-            onFileClick={handleFileTreeClick}
-            onRenameFile={handleRenameFile}
-            onDeleteFile={handleDeleteFile}
-            onDeleteFolder={handleDeleteFolder}
-            onSetRenderTarget={handleSetRenderTarget}
-            onCreateFile={handleCreateFile}
-            onCreateFolder={handleCreateFolder}
-            onMoveItem={handleMoveItem}
-            onAddExternalFiles={handleAddExternalFiles}
-            collapsed={!settings.ui.fileTreeVisible}
-            onToggleCollapse={handleToggleFileTree}
-            width={settings.ui.fileTreeWidth}
-          />
-        )}
-        <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden">
           <WorkspaceProvider value={workspaceState}>
             <DockviewReact
               components={panelComponents}
@@ -2554,7 +1899,6 @@ function App() {
               disableFloatingGroups={true}
             />
           </WorkspaceProvider>
-        </div>
       </div>
 
       <ExportDialog
@@ -2599,6 +1943,50 @@ function App() {
     <TooltipProvider>
       {content}
       {shareBlockingOverlay}
+      {confirmingReplacement && (
+        <dialog
+          ref={replacementDialogRef}
+          aria-labelledby="save-before-replacing-title"
+          className="w-full max-w-sm rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)] p-5 text-[var(--text-primary)] backdrop:bg-black/60"
+          onCancel={(event) => {
+            event.preventDefault();
+            if (!isSavingReplacement) finishProjectReplacement(false);
+          }}
+        >
+          <h2 id="save-before-replacing-title" className="font-semibold">
+            Save changes to this project?
+          </h2>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => finishProjectReplacement(false)}
+              disabled={isSavingReplacement}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => finishProjectReplacement(true)}
+              disabled={isSavingReplacement}
+            >
+              Discard
+            </Button>
+            <Button
+              variant="primary"
+              autoFocus
+              disabled={isSavingReplacement}
+              onClick={async () => {
+                setIsSavingReplacement(true);
+                const saved = await saveProject();
+                setIsSavingReplacement(false);
+                if (saved && !hasUnsavedProject()) finishProjectReplacement(true);
+              }}
+            >
+              Save
+            </Button>
+          </div>
+        </dialog>
+      )}
       <Toaster
         richColors
         position="bottom-right"

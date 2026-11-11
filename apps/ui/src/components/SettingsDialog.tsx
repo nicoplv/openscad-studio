@@ -3,7 +3,6 @@ import { loadSettings, saveSettings, type Settings } from '../stores/settingsSto
 import { useTheme } from '../contexts/ThemeContext';
 import {
   useAnalytics,
-  type LayoutSelectionSource,
   type ViewerPreferenceKey,
 } from '../analytics/runtime';
 import { Button, IconButton, Text } from './ui';
@@ -18,7 +17,6 @@ import {
   TbRuler,
 } from 'react-icons/tb';
 import { getPlatform } from '../platform';
-import { applyWorkspacePreset } from '../stores/layoutStore';
 import { notifyError } from '../utils/notifications';
 import {
   AppearanceSettings,
@@ -144,24 +142,6 @@ export function SettingsDialog({ isOpen, onClose, initialTab }: SettingsDialogPr
           enabled: value,
         });
       }
-    },
-    [settings, analytics]
-  );
-
-  const handleDefaultLayoutChange = useCallback(
-    (preset: Settings['ui']['defaultLayoutPreset']) => {
-      const changed = settings.ui.defaultLayoutPreset !== preset;
-      const updated = { ...settings, ui: { ...settings.ui, defaultLayoutPreset: preset } };
-      setSettings(updated);
-      saveSettings(updated);
-      if (changed) {
-        analytics.track('workspace layout selected', {
-          layout: preset,
-          source: 'settings' satisfies LayoutSelectionSource,
-          is_first_run: false,
-        });
-      }
-      applyWorkspacePreset(preset);
     },
     [settings, analytics]
   );
@@ -345,7 +325,6 @@ export function SettingsDialog({ isOpen, onClose, initialTab }: SettingsDialogPr
               <AppearanceSettings
                 settings={settings}
                 onAppearanceChange={handleAppearanceChange}
-                onDefaultLayoutChange={handleDefaultLayoutChange}
               />
             )}
             {activeSection === 'viewer' && (

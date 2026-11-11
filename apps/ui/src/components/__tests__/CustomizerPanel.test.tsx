@@ -141,7 +141,6 @@ describe('CustomizerPanel', () => {
         previewAvailable
         renderReady
         onRefineWithAi={() => {}}
-        onEditCode={() => {}}
         onDownloadStl={() => {}}
       />
     );
@@ -160,7 +159,7 @@ describe('CustomizerPanel', () => {
     expect(mockTrack).toHaveBeenCalledWith(
       'customizer rendered',
       expect.objectContaining({
-        layout_preset: 'default',
+        layout_preset: 'ai-first',
         parameter_count_bucket: '<=3',
         group_count_bucket: '<=2',
         has_studio_metadata: false,
@@ -169,32 +168,20 @@ describe('CustomizerPanel', () => {
     );
   });
 
-  it('shows the no-params refine state and forwards the suggested AI prompt', () => {
-    const handleRefine = jest.fn();
+  it('shows the no-params state without action buttons', () => {
     mockParseCustomizerParams.mockReturnValue([]);
 
     renderWithProviders(
       <CustomizerPanel
         code="cube(10);"
         baselineCode="cube(10);"
-        onRefineWithAi={handleRefine}
-        onEditCode={() => {}}
+        onRefineWithAi={() => {}}
       />
     );
 
     expect(screen.getByText('No parameters yet')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('customizer-refine-button'));
-
-    expect(handleRefine).toHaveBeenCalled();
-    expect(mockTrack).toHaveBeenCalledWith(
-      'customizer action clicked',
-      expect.objectContaining({
-        action: 'open_ai_refine',
-        layout_preset: 'default',
-        has_studio_metadata: false,
-        parameter_count_bucket: '<=0',
-      })
-    );
+    expect(screen.queryByRole('button', { name: 'Refine with AI' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit Code' })).toBeNull();
   });
 
   it('shows a loading skeleton until the parser is ready', () => {
@@ -336,7 +323,7 @@ describe('CustomizerPanel', () => {
     expect(mockTrack).toHaveBeenCalledWith(
       'customizer rendered',
       expect.objectContaining({
-        layout_preset: 'customizer-first',
+        layout_preset: 'ai-first',
         parameter_count_bucket: '<=3',
         group_count_bucket: '<=1',
         has_studio_metadata: true,
@@ -347,7 +334,7 @@ describe('CustomizerPanel', () => {
       'customizer action clicked',
       expect.objectContaining({
         action: 'open_export',
-        layout_preset: 'customizer-first',
+        layout_preset: 'ai-first',
         has_studio_metadata: true,
         parameter_count_bucket: '<=3',
       })

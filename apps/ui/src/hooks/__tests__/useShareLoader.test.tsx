@@ -19,7 +19,7 @@ function TestComponent({ enabled = true }: { enabled?: boolean }) {
       <div data-testid="loading">{String(state.isLoading)}</div>
       <div data-testid="error">{state.error ?? ''}</div>
       <div data-testid="title">{state.shareData?.title ?? ''}</div>
-      <div data-testid="mode">{state.shareContext?.mode ?? ''}</div>
+      <div data-testid="share-id">{state.shareContext?.shareId ?? ''}</div>
     </div>
   );
 }
@@ -45,12 +45,12 @@ describe('useShareLoader', () => {
       thumbnailUrl: null,
     });
 
-    window.__SHARE_CONTEXT = { shareId: 'abc12345', mode: 'customizer-first' };
+    window.__SHARE_CONTEXT = { shareId: 'abc12345' };
     window.history.replaceState({}, '', '/s/abc12345');
 
     render(<TestComponent />);
 
-    expect(screen.getByTestId('mode').textContent).toBe('customizer-first');
+    expect(screen.getByTestId('share-id').textContent).toBe('abc12345');
     await waitFor(() => {
       expect(screen.getByTestId('title').textContent).toBe('Test Share');
     });
@@ -62,7 +62,7 @@ describe('useShareLoader', () => {
     error.status = 404;
     mockGetShare.mockRejectedValue(error);
 
-    window.__SHARE_CONTEXT = { shareId: 'missing', mode: 'default' };
+    window.__SHARE_CONTEXT = { shareId: 'missing' };
 
     render(<TestComponent />);
 
@@ -74,7 +74,7 @@ describe('useShareLoader', () => {
   });
 
   it('stays idle when disabled', () => {
-    window.__SHARE_CONTEXT = { shareId: 'abc12345', mode: 'customizer-first' };
+    window.__SHARE_CONTEXT = { shareId: 'abc12345' };
 
     render(<TestComponent enabled={false} />);
 

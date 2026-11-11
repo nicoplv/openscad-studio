@@ -8,7 +8,7 @@ import type { ShareContext, ShareData, ShareOrigin, ShareEntryPhase } from '../t
 
 interface UseShareEntryOptions {
   renderReady: boolean;
-  openSharedDocument: (share: ShareData) => string;
+  openSharedDocument: (share: ShareData) => string | null | Promise<string | null>;
   renderSharedDocument: (args: {
     tabId: string;
     code: string;
@@ -66,6 +66,7 @@ export function useShareEntry({
   const dismissBanner = useShareEntryStore((state) => state.dismissBanner);
   const analytics = useAnalytics();
   const fetchTokenRef = useRef(0);
+  const applyingTokenRef = useRef<number | null>(null);
 
   useEffect(() => {
     setContext(routeContext);
@@ -87,7 +88,6 @@ export function useShareEntry({
         }
 
         analytics.track('share loaded', {
-          share_mode: context.mode,
           has_forked_from: Boolean(nextShare.forkedFrom),
         });
         setShareData(nextShare);
@@ -115,35 +115,45 @@ export function useShareEntry({
       return;
     }
 
-    const targetTabId = openSharedDocument(shareData);
-    startRendering({
-      origin: {
-        shareId: context.shareId,
-        mode: context.mode,
-        title: shareData.title,
-        forkedFrom: shareData.forkedFrom,
-      },
-      targetTabId,
-    });
+    const token = fetchTokenRef.current;
+    if (applyingTokenRef.current === token) return;
+    applyingTokenRef.current = token;
 
-    Promise.resolve(renderSharedDocument({ tabId: targetTabId, code: shareData.code }))
-      .then((snapshot) => {
-        if (!snapshot || snapshot.error || !snapshot.previewSrc) {
-          markReady();
-        }
-      })
-      .catch((renderError: unknown) => {
-        const message =
-          renderError instanceof Error
-            ? renderError.message
-            : 'Rendering failed while opening the shared design.';
-        fail(message);
+    const renderOpenedDocument = async (targetTabId: string | null) => {
+      if (fetchTokenRef.current !== token) return;
+      if (!targetTabId) {
+        skipStore();
+        openFallbackEditor();
+        return;
+      }
+      startRendering({
+        origin: {
+          shareId: context.shareId,
+          title: shareData.title,
+          forkedFrom: shareData.forkedFrom,
+        },
+        targetTabId,
+      });
+      const snapshot = await renderSharedDocument({ tabId: targetTabId, code: shareData.code });
+      if (!snapshot || snapshot.error || !snapshot.previewSrc) markReady();
+    };
+
+    Promise.resolve(openSharedDocument(shareData))
+      .then(renderOpenedDocument)
+      .catch((error: unknown) => {
+        fail(
+          error instanceof Error
+            ? error.message
+            : 'Rendering failed while opening the shared design.'
+        );
       });
   }, [
     context,
     fail,
     markReady,
     openSharedDocument,
+    openFallbackEditor,
+    skipStore,
     phase,
     renderReady,
     renderSharedDocument,

@@ -44,10 +44,7 @@ test.describe('Share links', () => {
     await expect(app.page.getByTestId('share-link-input')).toHaveValue(
       `http://localhost:3000/s/${SHARE_ID}`
     );
-    await app.page.getByTestId('share-mode-default').click();
-    await expect(app.page.getByTestId('share-link-input')).toHaveValue(
-      `http://localhost:3000/s/${SHARE_ID}?mode=default`
-    );
+    await expect(app.page.getByText('Default View')).toHaveCount(0);
   });
 
   test('loads shared design on mobile viewport without hanging', async ({ page }) => {

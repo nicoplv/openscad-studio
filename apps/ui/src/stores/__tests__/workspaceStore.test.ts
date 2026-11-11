@@ -38,14 +38,14 @@ describe('workspaceStore', () => {
     });
   });
 
-  it('closes the last tab into a clean welcome state', () => {
+  it('keeps a starter editor tab when the last tab is removed', () => {
     const store = createWorkspaceStore();
     const initialTabId = store.getState().activeTabId!;
 
     store.getState().closeTabLocal(initialTabId);
 
     const state = store.getState();
-    expect(state.showWelcome).toBe(true);
+    expect(state.showWelcome).toBe(false);
     expect(state.tabs).toHaveLength(1);
     expect(state.activeTabId).toBe(state.tabs[0].id);
     expect(state.tabs[0].render).toEqual(createEmptyRenderState());

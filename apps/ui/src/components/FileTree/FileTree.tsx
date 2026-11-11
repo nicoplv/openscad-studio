@@ -71,7 +71,7 @@ interface DragState {
 }
 
 interface FileTreeCallbacks {
-  onFileClick: (path: string) => void;
+  onFileDoubleClick: (path: string) => void;
   onRenameFile: (oldPath: string, newName: string) => void;
   onDeleteFile: (path: string) => void;
   onDeleteFolder: (path: string) => void;
@@ -167,7 +167,6 @@ function useCtxHover() {
 
 interface FolderNodeProps {
   node: TreeNode;
-  activeFilePath: string | null;
   renderTargetPath: string | null;
   pendingRenameFile: string | null;
   pendingFolderParent: string | null;
@@ -182,7 +181,6 @@ interface FolderNodeProps {
 
 function FolderNode({
   node,
-  activeFilePath,
   renderTargetPath,
   pendingRenameFile,
   pendingFolderParent,
@@ -383,7 +381,6 @@ function FolderNode({
           )}
           <TreeNodes
             nodes={node.children}
-            activeFilePath={activeFilePath}
             renderTargetPath={renderTargetPath}
             pendingRenameFile={pendingRenameFile}
             pendingFolderParent={pendingFolderParent}
@@ -405,7 +402,6 @@ function FolderNode({
 
 interface TreeNodesProps {
   nodes: TreeNode[];
-  activeFilePath: string | null;
   renderTargetPath: string | null;
   pendingRenameFile: string | null;
   pendingFolderParent: string | null;
@@ -420,7 +416,6 @@ interface TreeNodesProps {
 
 function TreeNodes({
   nodes,
-  activeFilePath,
   renderTargetPath,
   pendingRenameFile,
   pendingFolderParent,
@@ -447,12 +442,13 @@ function TreeNodes({
               <FileTreeItem
                 name={node.name}
                 fullPath={node.fullPath}
-                isActive={node.fullPath === activeFilePath}
+                isSelected={node.fullPath === renderTargetPath}
                 isDirty={files[node.fullPath]?.isDirty ?? false}
                 isRenderTarget={node.fullPath === renderTargetPath}
                 pendingRename={node.fullPath === pendingRenameFile}
                 isDragging={node.fullPath === callbacks.getDragState()?.draggingPath}
-                onClick={() => callbacks.onFileClick(node.fullPath)}
+                onClick={() => callbacks.onSetRenderTarget(node.fullPath)}
+                onDoubleClick={() => callbacks.onFileDoubleClick(node.fullPath)}
                 onRename={callbacks.onRenameFile}
                 onDelete={callbacks.onDeleteFile}
                 onSetRenderTarget={callbacks.onSetRenderTarget}
@@ -471,7 +467,6 @@ function TreeNodes({
           <FolderNode
             key={node.fullPath}
             node={node}
-            activeFilePath={activeFilePath}
             renderTargetPath={renderTargetPath}
             pendingRenameFile={pendingRenameFile}
             pendingFolderParent={pendingFolderParent}
@@ -492,11 +487,10 @@ function TreeNodes({
 // ── FileTree (root) ───────────────────────────────────────────────────────────
 
 interface FileTreeProps {
-  activeFilePath: string | null;
   pendingRenameFile: string | null;
   expandedFolders: Set<string>;
   toggleFolder: (path: string) => void;
-  onFileClick: (path: string) => void;
+  onFileDoubleClick: (path: string) => void;
   onRenameFile: (oldPath: string, newName: string) => void;
   onDeleteFile: (path: string) => void;
   onDeleteFolder: (path: string) => void;
@@ -509,11 +503,10 @@ interface FileTreeProps {
 }
 
 export function FileTree({
-  activeFilePath,
   pendingRenameFile,
   expandedFolders,
   toggleFolder,
-  onFileClick,
+  onFileDoubleClick,
   onRenameFile,
   onDeleteFile,
   onDeleteFolder,
@@ -541,7 +534,7 @@ export function FileTree({
   const tree = buildTree(filePaths, emptyFolders);
 
   const callbacks: FileTreeCallbacks = {
-    onFileClick,
+    onFileDoubleClick,
     onRenameFile,
     onDeleteFile,
     onDeleteFolder,
@@ -632,7 +625,11 @@ export function FileTree({
     return (
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
-          <div className="px-3 py-2 text-xs min-h-full" style={{ color: 'var(--text-tertiary)' }}>
+          <div
+            data-testid="file-tree-root"
+            className="px-3 py-2 text-xs min-h-full"
+            style={{ color: 'var(--text-tertiary)' }}
+          >
             {pendingFolderParent === '' ? (
               <FolderCreationInput
                 depth={0}
@@ -656,6 +653,7 @@ export function FileTree({
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <div
+          data-testid="file-tree-root"
           className="py-1 min-h-full"
           style={
             dropTargetPath === ''
@@ -682,7 +680,6 @@ export function FileTree({
           )}
           <TreeNodes
             nodes={tree}
-            activeFilePath={activeFilePath}
             renderTargetPath={renderTargetPath}
             pendingRenameFile={pendingRenameFile}
             pendingFolderParent={pendingFolderParent}

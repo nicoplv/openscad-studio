@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import { type ToolSet, stepCountIs } from 'ai';
 import { bucketCount, useAnalytics, type ModelSelectionSurface } from '../analytics/runtime';
 import { historyService, eventBus, getPlatform } from '../platform';
@@ -33,7 +33,6 @@ import type {
   AiDraft,
   AiContextUsage,
   AttachmentStore,
-  Conversation,
   Message,
   ToolCall,
   UserMessagePart,
@@ -68,6 +67,18 @@ import {
 import { normalizeProjectRelativePath } from '../utils/projectFilePaths';
 import { createRandomId } from '../utils/randomId';
 import { updateSetting, loadSettings, type MeasurementUnit } from '../stores/settingsStore';
+import {
+  getProjectConversations,
+  getProjectEpoch,
+  setProjectConversations,
+  useProjectSession,
+} from '../services/projectLifecycle';
+import {
+  EMPTY_CONVERSATIONS,
+  isValidProjectPath,
+  type ProjectConversation,
+} from '../stores/projectDocument';
+import { getUserMessageText } from '../types/aiChat';
 
 function extractErrorText(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -206,7 +217,8 @@ export interface AiAgentState {
   errorObject: Error | null;
   isApplyingDiff: boolean;
   messages: Message[];
-  conversations: Conversation[];
+  conversations: ProjectConversation[];
+  interrupted: boolean;
   currentConversationId: string | null;
   currentToolCalls: ToolCall[];
   currentProvider: AiProvider;
@@ -227,6 +239,7 @@ export interface AddDraftFilesResult {
 }
 
 interface UseAiAgentOptions {
+  persistProject?: boolean;
   testOverrides?: {
     analytics?: ReturnType<typeof useAnalytics>;
     availableProviders?: ReturnType<typeof useAvailableProviders>;
@@ -244,7 +257,92 @@ interface UseAiAgentOptions {
   };
 }
 
+function conversationFields(conversation?: ProjectConversation) {
+  const attachments: AttachmentStore = {};
+  for (const [id, attachment] of Object.entries(conversation?.attachments ?? {})) {
+    const { normalizedData, normalizedMimeType } = attachment;
+    attachments[id] = {
+      ...attachment,
+      previewUrl:
+        normalizedData && normalizedMimeType
+          ? `data:${normalizedMimeType};base64,${normalizedData}`
+          : undefined,
+    };
+  }
+
+  return {
+    currentConversationId: conversation?.id ?? createRandomId(),
+    messages: conversation?.messages ?? [],
+    draft: conversation?.draft ?? EMPTY_DRAFT,
+    attachments,
+    interrupted: conversation?.interrupted ?? false,
+  };
+}
+
+function snapshotConversation(
+  state: AiAgentState,
+  lastUsed: number,
+  checkpoints: ProjectConversation['checkpoints'],
+  checkpointId?: string | null
+): ProjectConversation {
+  const id = state.currentConversationId ?? createRandomId();
+  const attachments: ProjectConversation['attachments'] = {};
+  for (const [key, { previewUrl, status, ...attachment }] of Object.entries(state.attachments)) {
+    void previewUrl;
+    if (status !== 'pending') attachments[key] = { ...attachment, status };
+  }
+
+  const messages = [...state.messages];
+  if (state.isStreaming && checkpointId) {
+    const index = messages.map(({ type }) => type).lastIndexOf('user');
+    const prompt = messages[index];
+    if (prompt?.type === 'user') messages[index] = { ...prompt, checkpointId };
+  }
+  if (state.isStreaming && state.streamingResponse) {
+    const turnId = state.messages[state.messages.length - 1]?.id ?? id;
+    messages.push({
+      type: 'assistant',
+      id: `${turnId}-partial`,
+      turnId,
+      timestamp: lastUsed,
+      state: 'cancelled',
+      content: state.streamingResponse,
+    });
+  }
+  return {
+    id,
+    lastUsed,
+    messages,
+    draft: {
+      ...state.draft,
+      attachmentIds: state.draft.attachmentIds.filter((key) => key in attachments),
+    },
+    attachments,
+    checkpoints,
+    interrupted: state.isStreaming || state.interrupted,
+  };
+}
+
+function hasConversationContent(conversation: ProjectConversation) {
+  const { draft, messages } = conversation;
+  return Boolean(
+    messages.length || draft.text || draft.attachmentIds.length || draft.comments?.length
+  );
+}
+
 export function useAiAgent(options: UseAiAgentOptions = {}) {
+  const persistProject = options.persistProject ?? false;
+  const projectEpoch = useProjectSession((state) => (persistProject ? state.epoch : 0));
+  const activeEpoch = useRef(projectEpoch);
+  const initialHistory = useRef(persistProject ? getProjectConversations() : EMPTY_CONVERSATIONS);
+  const initialConversation = initialHistory.current.conversations.find(
+    ({ id }) => id === initialHistory.current.activeId
+  );
+  const lastUsed = useRef(initialConversation?.lastUsed ?? Date.now());
+  const checkpoints = useRef<ProjectConversation['checkpoints']>(
+    initialConversation?.checkpoints ?? {}
+  );
+  const skipPublish = useRef(true);
   const defaultAnalytics = useAnalytics();
   const defaultAvailableProviders = useAvailableProviders();
   const overrides = options.testOverrides;
@@ -262,29 +360,28 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
   const updateSettingImpl = overrides?.updateSetting ?? updateSetting;
   const loadSettingsImpl = overrides?.loadSettings ?? loadSettings;
   const initialSelection = getStoredModelSelection();
-  const [state, setState] = useState<AiAgentState>({
+  const [state, setState] = useState<AiAgentState>(() => ({
     isStreaming: false,
     streamingResponse: null,
     proposedDiff: null,
     error: null,
     errorObject: null,
     isApplyingDiff: false,
-    messages: [],
-    conversations: [],
-    currentConversationId: null,
+    ...conversationFields(initialConversation),
+    conversations: initialHistory.current.conversations.filter(
+      ({ id }) => id !== initialHistory.current.activeId
+    ),
     currentToolCalls: [],
     currentProvider: initialSelection.provider,
     currentModel: initialSelection.modelId,
     currentModelVisionSupport: getVisionSupportForModelIdImpl(initialSelection.modelId),
     lastContextUsage: null,
-    draft: EMPTY_DRAFT,
-    attachments: {},
     draftErrors: [],
     isProcessingAttachments: false,
-  });
+  }));
 
   const stateRef = useRef(state);
-  useEffect(() => {
+  useLayoutEffect(() => {
     stateRef.current = state;
   }, [state]);
 
@@ -303,6 +400,87 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
   const pendingCheckpointIdRef = useRef<string | null>(null);
   const didReceiveResponseRef = useRef(false);
   const requestStartedAtRef = useRef<number | null>(null);
+
+  const setActiveConversation = useCallback(
+    (
+      conversation: ProjectConversation | undefined,
+      conversations: ProjectConversation[],
+      reopening = false
+    ) => {
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
+      activeTurnRef.current = null;
+      activeTurnDraftRef.current = null;
+      pendingCheckpointIdRef.current = null;
+      revokePreviewUrlsForIds(
+        Object.keys(stateRef.current.attachments),
+        stateRef.current.attachments
+      );
+      const fields = conversationFields(conversation);
+      committedMessagesRef.current = fields.messages;
+      checkpoints.current = conversation?.checkpoints ?? {};
+      lastUsed.current = reopening
+        ? (conversation?.lastUsed ?? Date.now())
+        : Math.max(Date.now(), lastUsed.current + 1);
+      setState((prev) => ({
+        ...prev,
+        ...fields,
+        conversations,
+        isStreaming: false,
+        isProcessingAttachments: false,
+        streamingResponse: null,
+        error: null,
+        errorObject: null,
+        currentToolCalls: [],
+        draftErrors: [],
+        lastContextUsage: null,
+      }));
+    },
+    []
+  );
+
+  useLayoutEffect(() => {
+    if (!persistProject) return;
+    if (activeEpoch.current !== projectEpoch) {
+      activeEpoch.current = projectEpoch;
+      skipPublish.current = true;
+      const history = getProjectConversations();
+      setActiveConversation(
+        history.conversations.find(({ id }) => id === history.activeId),
+        history.conversations.filter(({ id }) => id !== history.activeId),
+        true
+      );
+      return;
+    }
+    if (skipPublish.current) {
+      skipPublish.current = false;
+      return;
+    }
+    const current = snapshotConversation(
+      stateRef.current,
+      lastUsed.current,
+      checkpoints.current,
+      pendingCheckpointIdRef.current
+    );
+    const conversations = [...state.conversations, current];
+    if (!state.conversations.length && !hasConversationContent(current)) {
+      setProjectConversations(EMPTY_CONVERSATIONS);
+      return;
+    }
+    setProjectConversations({ activeId: current.id, conversations });
+  }, [
+    persistProject,
+    projectEpoch,
+    setActiveConversation,
+    state.attachments,
+    state.conversations,
+    state.currentConversationId,
+    state.draft,
+    state.interrupted,
+    state.isStreaming,
+    state.messages,
+    state.streamingResponse,
+  ]);
 
   useEffect(() => {
     if (!state.isStreaming) {
@@ -353,7 +531,7 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
       },
       createProjectFile: (path: string, content: string) => {
         const normalizedPath = normalizeProjectRelativePath(path);
-        if (!normalizedPath) return false;
+        if (!normalizedPath || !isValidProjectPath(normalizedPath)) return false;
         const state = getProjectState();
         if (normalizedPath in state.files) return false;
         getProjectStore().getState().addFile(normalizedPath, content);
@@ -365,7 +543,11 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
           void platform
             .createDirectory(`${projectRoot}/${normalizedPath.split('/').slice(0, -1).join('/')}`)
             .then(() => platform.writeTextFile(`${projectRoot}/${normalizedPath}`, content))
-            .then(() => getProjectStore().getState().markFileSaved(normalizedPath, content))
+            .then(() => {
+              const project = getProjectState();
+              if (project.projectRoot === projectRoot)
+                getProjectStore().getState().markFileSaved(normalizedPath, content);
+            })
             .catch((err) => console.warn('[createProjectFile] Failed to persist to disk:', err));
         }
 
@@ -389,7 +571,11 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
           const platform = getPlatform();
           void platform
             .writeTextFile(`${projectRoot}/${path}`, newContent)
-            .then(() => getProjectStore().getState().markFileSaved(path, newContent))
+            .then(() => {
+              const project = getProjectState();
+              if (project.projectRoot === projectRoot)
+                getProjectStore().getState().markFileSaved(path, newContent);
+            })
             .catch((err) => console.warn('[editProjectFile] Failed to persist to disk:', err));
         }
 
@@ -412,8 +598,6 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
     }),
     [loadSettingsImpl, updateSettingImpl]
   );
-
-  const tools: ToolSet = useMemo(() => buildToolsImpl(callbacks), [buildToolsImpl, callbacks]);
 
   const updateCapturePreview = useCallback((fn: (() => Promise<string | null>) | null) => {
     capturePreviewRef.current = fn;
@@ -589,6 +773,7 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
 
   useEffect(() => {
     return () => {
+      abortControllerRef.current?.abort();
       revokePreviewUrlsForIds(
         Object.keys(stateRef.current.attachments),
         stateRef.current.attachments
@@ -635,6 +820,7 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
       if (files.length === 0) return;
 
       const snapshot = stateRef.current;
+      const epoch = getProjectEpoch();
       setState((prev) => ({
         ...prev,
         isProcessingAttachments: true,
@@ -647,6 +833,15 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
         snapshot.attachments,
         sourceSurface
       );
+      if (
+        (persistProject && epoch !== getProjectEpoch()) ||
+        stateRef.current.currentConversationId !== snapshot.currentConversationId
+      ) {
+        for (const attachment of result.attachments) {
+          if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+        }
+        return;
+      }
       const readyCount = result.attachments.filter(
         (attachment) => attachment.status === 'ready'
       ).length;
@@ -687,7 +882,7 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
         errors: [...result.errors],
       } satisfies AddDraftFilesResult;
     },
-    [analytics, processAttachmentFilesImpl]
+    [analytics, persistProject, processAttachmentFilesImpl]
   );
 
   const removeDraftAttachment = useCallback(
@@ -826,6 +1021,7 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
       setState((prev) => ({
         ...prev,
         isStreaming: true,
+        interrupted: false,
         streamingResponse: null,
         error: null,
         messages: updatedMessages,
@@ -876,12 +1072,32 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
         };
         const dynamicSystem = `${SYSTEM_PROMPT}\n\nCurrent measurement unit: ${measurementUnit} (${unitLabels[measurementUnit]}) — all displayed dimensions use this unit`;
 
+        const epoch = getProjectEpoch();
+        const tools: ToolSet = buildToolsImpl(callbacks);
+        for (const [name, tool] of Object.entries(tools)) {
+          const execute = tool.execute;
+          if (!execute) continue;
+          tools[name] = {
+            ...tool,
+            execute: (input, options) => {
+              if (
+                abortController.signal.aborted ||
+                (persistProject && getProjectEpoch() !== epoch)
+              ) {
+                throw new Error('The conversation is no longer active.');
+              }
+              return execute(input, options);
+            },
+          };
+        }
+
         const result = await startAiStreamImpl({
           model,
           system: dynamicSystem,
           messages: modelMessages,
           tools,
-          prepareStep: provider === 'openai-compatible' ? prepareOpenAiCompatiblePreviewStep : undefined,
+          prepareStep:
+            provider === 'openai-compatible' ? prepareOpenAiCompatiblePreviewStep : undefined,
           stopWhen: stepCountIs(MAX_AGENT_STEPS),
           abortSignal: abortController.signal,
         });
@@ -927,6 +1143,13 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
             const checkpointId = extractApplyEditCheckpointId(chunk.output);
             if (checkpointId) {
               pendingCheckpointIdRef.current = checkpointId;
+              const checkpoint = historyServiceImpl.getById?.(checkpointId);
+              if (checkpoint?.projectPath) {
+                checkpoints.current = {
+                  ...checkpoints.current,
+                  [checkpointId]: { path: checkpoint.projectPath, code: checkpoint.code },
+                };
+              }
             }
           }
 
@@ -998,7 +1221,7 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
           }));
         }
       } finally {
-        abortControllerRef.current = null;
+        if (abortControllerRef.current === abortController) abortControllerRef.current = null;
       }
     },
     [
@@ -1006,11 +1229,13 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
       callbacks,
       createModelImpl,
       finalizeStreamTurn,
+      historyServiceImpl,
       logTurnWarnings,
       messagesToModelMessagesImpl,
       startAiStreamImpl,
       syncActiveTurnState,
-      tools,
+      buildToolsImpl,
+      persistProject,
     ]
   );
 
@@ -1071,46 +1296,77 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
     [analytics, getVisionSupportForModelIdImpl]
   );
 
+  const selectConversation = useCallback(
+    (id?: string) => {
+      const current = stateRef.current;
+      if (
+        current.isStreaming ||
+        current.isProcessingAttachments ||
+        id === current.currentConversationId
+      )
+        return;
+      const next = current.conversations.find((conversation) => conversation.id === id);
+      if (id && !next) return;
+
+      const snapshot = snapshotConversation(current, lastUsed.current, checkpoints.current);
+      const conversations = current.conversations.filter((conversation) => conversation.id !== id);
+      if (hasConversationContent(snapshot)) conversations.push(snapshot);
+      setActiveConversation(next, conversations);
+    },
+    [setActiveConversation]
+  );
+
   const newConversation = useCallback(() => {
-    const currentState = stateRef.current;
+    const current = stateRef.current;
+    if (current.isStreaming) return;
     analytics.track('conversation started', {
       source_surface: 'ai_panel',
-      had_messages: currentState.messages.length > 0,
-      had_draft_text: currentState.draft.text.trim().length > 0,
-      draft_attachment_count: currentState.draft.attachmentIds.length,
-      previous_message_count_bucket: bucketCount(currentState.messages.length, [1, 3, 8, 20]),
+      had_messages: current.messages.length > 0,
+      had_draft_text: current.draft.text.trim().length > 0,
+      draft_attachment_count: current.draft.attachmentIds.length,
+      previous_message_count_bucket: bucketCount(current.messages.length, [1, 3, 8, 20]),
     });
-    activeTurnRef.current = null;
-    activeTurnDraftRef.current = null;
-    committedMessagesRef.current = [];
-    pendingCheckpointIdRef.current = null;
-    setState((prev) => {
-      revokePreviewUrlsForIds(Object.keys(prev.attachments), prev.attachments);
-      return {
-        ...prev,
-        messages: [],
-        attachments: {},
-        draft: EMPTY_DRAFT,
-        draftErrors: [],
-        streamingResponse: null,
-        error: null,
-        errorObject: null,
-        currentToolCalls: [],
-        lastContextUsage: null,
-      };
-    });
-  }, [analytics]);
+    selectConversation();
+  }, [analytics, selectConversation]);
+
+  const conversationList = useMemo(() => {
+    const active = {
+      id: state.currentConversationId ?? '',
+      lastUsed: lastUsed.current,
+      messages: state.messages,
+    };
+    return [...state.conversations, active]
+      .sort((a, b) => b.lastUsed - a.lastUsed)
+      .map(({ id, messages }) => {
+        const prompt = messages.find((message): message is UserMessage => message.type === 'user');
+        return {
+          id,
+          title:
+            (prompt ? getUserMessageText(prompt).trim().slice(0, 80) : '') || 'New conversation',
+        };
+      });
+  }, [state.conversations, state.currentConversationId, state.messages]);
 
   const handleRestoreCheckpoint = useCallback(
     (checkpointId: string, truncatedMessages: Message[]) => {
+      if (stateRef.current.isStreaming) return false;
       if (IS_DEV) console.log('[useAiAgent] Restoring checkpoint:', checkpointId);
 
-      const checkpoint = historyServiceImpl.restoreTo(checkpointId);
-      if (checkpoint) {
-        eventBusImpl.emit('code-updated', { code: checkpoint.code, source: 'history' });
-        eventBusImpl.emit('history:restore', { code: checkpoint.code });
+      const saved = checkpoints.current[checkpointId];
+      if (persistProject) {
+        const project = getProjectStore().getState();
+        if (!saved || !project.files[saved.path]) return false;
+        project.updateFileContent(saved.path, saved.code);
+        project.setCustomizerBase(saved.path, saved.code);
+        requestRender('history_restore', { immediate: true });
       } else {
-        console.error('[useAiAgent] Failed to restore checkpoint: not found', checkpointId);
+        const checkpoint = historyServiceImpl.restoreTo(checkpointId);
+        if (checkpoint) {
+          eventBusImpl.emit('code-updated', { code: checkpoint.code, source: 'history' });
+          eventBusImpl.emit('history:restore', { code: checkpoint.code });
+        } else {
+          console.error('[useAiAgent] Failed to restore checkpoint: not found', checkpointId);
+        }
       }
 
       committedMessagesRef.current = truncatedMessages;
@@ -1125,8 +1381,9 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
       analytics.track('checkpoint restored', {
         had_later_messages: stateRef.current.messages.length > truncatedMessages.length,
       });
+      return true;
     },
-    [analytics, eventBusImpl, historyServiceImpl]
+    [analytics, eventBusImpl, historyServiceImpl, persistProject]
   );
 
   return {
@@ -1139,8 +1396,8 @@ export function useAiAgent(options: UseAiAgentOptions = {}) {
     rejectDiff,
     clearError,
     newConversation,
-    loadConversation: () => {},
-    saveConversation: async () => {},
+    selectConversation,
+    conversationList,
     setCurrentModel,
     loadModelAndProviders,
     handleRestoreCheckpoint,

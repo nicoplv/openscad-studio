@@ -2,6 +2,10 @@ import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
 import type { ProjectStore, ProjectStoreState, ProjectFile } from './projectTypes';
 import { DEFAULT_TAB_NAME, DEFAULT_OPENSCAD_CODE } from './workspaceFactories';
+import {
+  isRenderableOpenScadFilePath,
+  pickOpenScadRenderTarget,
+} from '../../../../packages/shared/src/openscadProjectFiles';
 
 // ============================================================================
 // Initial state
@@ -96,6 +100,9 @@ export function createProjectStore(initialState?: ProjectStoreState) {
           }),
         },
         emptyFolders: newEmptyFolders,
+        renderTargetPath:
+          state.renderTargetPath ??
+          (isRenderableOpenScadFilePath(relativePath) ? relativePath : null),
         contentVersion: state.contentVersion + 1,
       });
     },
@@ -146,8 +153,7 @@ export function createProjectStore(initialState?: ProjectStoreState) {
 
       // If we removed the render target, promote another file
       if (state.renderTargetPath === relativePath) {
-        const remaining = Object.keys(rest);
-        updates.renderTargetPath = remaining.length > 0 ? remaining[0] : null;
+        updates.renderTargetPath = pickOpenScadRenderTarget(Object.keys(rest));
       }
 
       // Persist parent folders that just became empty
@@ -173,6 +179,8 @@ export function createProjectStore(initialState?: ProjectStoreState) {
         contentVersion: state.contentVersion + 1,
       };
       if (state.renderTargetPath === oldPath) {
+        updates.renderTargetPath = newPath;
+      } else if (!state.renderTargetPath && isRenderableOpenScadFilePath(newPath)) {
         updates.renderTargetPath = newPath;
       }
       set(updates);
@@ -302,8 +310,7 @@ export function createProjectStore(initialState?: ProjectStoreState) {
       // Handle render target
       let newRenderTarget = state.renderTargetPath;
       if (newRenderTarget && newRenderTarget.startsWith(prefix)) {
-        const remaining = Object.keys(newFiles);
-        newRenderTarget = remaining.length > 0 ? remaining[0] : null;
+        newRenderTarget = pickOpenScadRenderTarget(Object.keys(newFiles));
       }
 
       set({

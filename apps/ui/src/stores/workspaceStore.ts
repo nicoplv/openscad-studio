@@ -14,7 +14,7 @@ function closeTabState(state: WorkspaceStoreState, id: string): WorkspaceStoreSt
     const resetState = createInitialWorkspaceState();
     return {
       ...resetState,
-      showWelcome: true,
+      showWelcome: false,
     };
   }
 

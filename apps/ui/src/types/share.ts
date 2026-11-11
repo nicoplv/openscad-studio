@@ -1,6 +1,3 @@
-import type { WorkspacePreset } from '../stores/layoutStore';
-
-export type ShareMode = Extract<WorkspacePreset, 'default' | 'ai-first' | 'customizer-first'>;
 export type ShareEntryPhase =
   | 'idle'
   | 'fetching'
@@ -12,7 +9,6 @@ export type ShareEntryPhase =
 
 export interface ShareContext {
   shareId: string;
-  mode: ShareMode;
 }
 
 export interface ShareData {

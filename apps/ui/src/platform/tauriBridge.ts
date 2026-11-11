@@ -415,13 +415,25 @@ export class TauriBridge implements PlatformBridge {
     const { listen } = await import('@tauri-apps/api/event');
 
     await listen('menu:file:new', () => eventBus.emit('menu:file:new'));
+    await listen('menu:file:new_file', () => eventBus.emit('menu:file:new_file'));
+    await listen('menu:file:open_project', () => eventBus.emit('menu:file:open_project'));
     await listen('menu:file:open', () => eventBus.emit('menu:file:open'));
     await listen('menu:file:open_folder', () => eventBus.emit('menu:file:open_folder'));
     await listen('menu:file:save', () => eventBus.emit('menu:file:save'));
     await listen('menu:file:save_as', () => eventBus.emit('menu:file:save_as'));
-    await listen('menu:file:save_all', () => eventBus.emit('menu:file:save_all'));
+    await listen('menu:file:export_source', () => eventBus.emit('menu:file:export_source'));
+    await listen('menu:file:export_all', () => eventBus.emit('menu:file:export_all'));
     await listen<string>('menu:file:export', (event) => {
       eventBus.emit('menu:file:export', event.payload as import('./types').ExportFormat);
+    });
+    await listen<string>('menu:window:open_panel', (event) => {
+      eventBus.emit(
+        'menu:window:open_panel',
+        event.payload as import('../stores/layoutStore').WorkspacePanelId
+      );
+    });
+    await listen('menu:window:reset_workspace', () => {
+      eventBus.emit('menu:window:reset_workspace');
     });
   }
 }

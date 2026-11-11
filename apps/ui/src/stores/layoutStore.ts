@@ -1,18 +1,44 @@
 import type { DockviewApi, SerializedDockview } from 'dockview';
 
-const LAYOUT_STORAGE_KEY = 'openscad-studio-layout';
+const LEGACY_LAYOUT_STORAGE_KEY = 'openscad-studio-layout';
+const LAYOUT_STORAGE_KEYS = {
+  desktop: 'openscad-studio-layout-desktop',
+  mobile: 'openscad-studio-layout-mobile',
+} as const;
+const DEFAULT_LAYOUT_FALLBACK_WIDTH = 1000;
+const DEFAULT_LAYOUT_FALLBACK_HEIGHT = 800;
+const DEFAULT_FILES_WIDTH_RATIO = 0.2;
+const DEFAULT_PRIMARY_WIDTH_RATIO = 0.4;
+const DEFAULT_SIDEBAR_HEIGHT_RATIO = 0.5;
+
 export const MOBILE_LAYOUT_MEDIA_QUERY = '(max-width: 767px)';
 
-export type WorkspacePreset =
-  | 'default'
-  | 'ai-first'
-  | 'customizer-first'
-  | 'wide-editor'
-  | 'wide-preview'
-  | 'minimal';
-export type LayoutMode = 'desktop' | 'mobile';
+export type LayoutMode = keyof typeof LAYOUT_STORAGE_KEYS;
+export type WorkspacePanelId =
+  | 'ai-chat'
+  | 'editor'
+  | 'preview'
+  | 'customizer'
+  | 'console'
+  | 'files';
+
+export interface WorkspacePanelDefinition {
+  id: WorkspacePanelId;
+  component: WorkspacePanelId;
+  title: string;
+}
+
+export const WORKSPACE_PANELS: readonly WorkspacePanelDefinition[] = [
+  { id: 'ai-chat', component: 'ai-chat', title: 'AI' },
+  { id: 'editor', component: 'editor', title: 'Editor' },
+  { id: 'preview', component: 'preview', title: 'Preview' },
+  { id: 'customizer', component: 'customizer', title: 'Customizer' },
+  { id: 'console', component: 'console', title: 'Console' },
+  { id: 'files', component: 'files', title: 'Files' },
+];
 
 let dockviewApi: DockviewApi | null = null;
+let loadedLegacyLayout = false;
 
 export function getDockviewApi(): DockviewApi | null {
   return dockviewApi;
@@ -22,327 +48,197 @@ export function setDockviewApi(api: DockviewApi | null): void {
   dockviewApi = api;
 }
 
-export function lockEditorGroup(api: DockviewApi) {
-  const editorPanel = api.getPanel('editor');
-  if (editorPanel) {
-    const group = editorPanel.api.group;
-    group.locked = 'no-drop-target';
-    group.header.hidden = true;
-  }
+export function getLayoutMode(): LayoutMode {
+  return typeof window !== 'undefined' && window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY).matches
+    ? 'mobile'
+    : 'desktop';
+}
+
+export function getLayoutStorageKey(mode: LayoutMode): string {
+  return LAYOUT_STORAGE_KEYS[mode];
+}
+
+function addPanelToGroup(
+  api: DockviewApi,
+  panel: WorkspacePanelDefinition,
+  groupId: string,
+  inactive = true
+) {
+  api.addPanel({
+    ...panel,
+    position: { referenceGroup: groupId },
+    inactive,
+  });
 }
 
 function addMobilePanels(api: DockviewApi) {
-  api.addPanel({ id: 'preview', component: 'preview', title: 'Preview' });
-  const previewPanel = api.getPanel('preview');
-  if (!previewPanel) {
-    return;
-  }
+  api.addPanel(WORKSPACE_PANELS[0]);
+  const aiPanel = api.getPanel('ai-chat');
+  if (!aiPanel) return;
 
-  const groupId = previewPanel.group.id;
-  api.addPanel({
-    id: 'customizer',
-    component: 'customizer',
-    title: 'Customizer',
-    position: { referenceGroup: groupId },
-    inactive: true,
-  });
-  api.addPanel({
-    id: 'editor',
-    component: 'editor',
-    title: 'Editor',
-    position: { referenceGroup: groupId },
-    inactive: true,
-  });
-  api.addPanel({
-    id: 'ai-chat',
-    component: 'ai-chat',
-    title: 'AI',
-    position: { referenceGroup: groupId },
-    inactive: true,
-  });
-  api.addPanel({
-    id: 'console',
-    component: 'console',
-    title: 'Console',
-    position: { referenceGroup: groupId },
-    inactive: true,
-  });
+  for (const panel of WORKSPACE_PANELS.slice(1)) {
+    addPanelToGroup(api, panel, aiPanel.group.id);
+  }
 }
 
-export function addPresetPanels(
-  api: DockviewApi,
-  preset: WorkspacePreset,
-  mode: LayoutMode = 'desktop'
-) {
+function getDefaultLayoutSizes(api: DockviewApi) {
+  const availableWidth = api.width > 0 ? api.width : DEFAULT_LAYOUT_FALLBACK_WIDTH;
+  const availableHeight = api.height > 0 ? api.height : DEFAULT_LAYOUT_FALLBACK_HEIGHT;
+  return {
+    files: Math.round(availableWidth * DEFAULT_FILES_WIDTH_RATIO),
+    primary: Math.round(availableWidth * DEFAULT_PRIMARY_WIDTH_RATIO),
+    sidebar: Math.round(availableHeight * DEFAULT_SIDEBAR_HEIGHT_RATIO),
+  };
+}
+
+export function addDefaultPanels(api: DockviewApi, mode: LayoutMode = 'desktop') {
   if (mode === 'mobile') {
     addMobilePanels(api);
     return;
   }
 
-  switch (preset) {
-    case 'default': {
-      api.addPanel({ id: 'editor', component: 'editor', title: 'Editor' });
-      api.addPanel({
-        id: 'ai-chat',
-        component: 'ai-chat',
-        title: 'AI',
-        position: { referencePanel: 'editor', direction: 'below' },
-        initialHeight: 350,
-      });
-      const aiGroup = api.getPanel('ai-chat');
-      if (aiGroup) {
-        api.addPanel({
-          id: 'console',
-          component: 'console',
-          title: 'Console',
-          position: { referenceGroup: aiGroup.group.id },
-          inactive: true,
-        });
-      }
-      api.addPanel({
-        id: 'preview',
-        component: 'preview',
-        title: 'Preview',
-        position: { referencePanel: 'editor', direction: 'right' },
-      });
-      const previewPanel = api.getPanel('preview');
-      if (previewPanel) {
-        api.addPanel({
-          id: 'customizer',
-          component: 'customizer',
-          title: 'Customizer',
-          position: { referenceGroup: previewPanel.group.id },
-          inactive: true,
-        });
-      }
-      break;
-    }
-    case 'ai-first': {
-      api.addPanel({ id: 'ai-chat', component: 'ai-chat', title: 'AI' });
-      const aiPanel = api.getPanel('ai-chat');
-      if (aiPanel) {
-        api.addPanel({
-          id: 'editor',
-          component: 'editor',
-          title: 'Editor',
-          position: { referenceGroup: aiPanel.group.id },
-          inactive: true,
-        });
-      }
-      api.addPanel({
-        id: 'preview',
-        component: 'preview',
-        title: 'Preview',
-        position: { referencePanel: 'ai-chat', direction: 'right' },
-      });
-      const aiFpPreview = api.getPanel('preview');
-      if (aiFpPreview) {
-        api.addPanel({
-          id: 'customizer',
-          component: 'customizer',
-          title: 'Customizer',
-          position: { referenceGroup: aiFpPreview.group.id },
-          inactive: true,
-        });
-        api.addPanel({
-          id: 'console',
-          component: 'console',
-          title: 'Console',
-          position: { referenceGroup: aiFpPreview.group.id },
-          inactive: true,
-        });
-      }
-      break;
-    }
-    case 'customizer-first': {
-      api.addPanel({ id: 'preview', component: 'preview', title: 'Preview', initialWidth: 900 });
-      api.addPanel({
-        id: 'customizer',
-        component: 'customizer',
-        title: 'Customizer',
-        position: { referencePanel: 'preview', direction: 'right' },
-        initialWidth: 420,
-      });
-      // Add AI/Editor/Console as tabs in the preview group (left side), after the
-      // split is established so dockview places them in the correct group.
-      const previewPanel = api.getPanel('preview');
-      if (previewPanel) {
-        api.addPanel({
-          id: 'ai-chat',
-          component: 'ai-chat',
-          title: 'AI',
-          position: { referenceGroup: previewPanel.group.id },
-          inactive: true,
-        });
-        api.addPanel({
-          id: 'editor',
-          component: 'editor',
-          title: 'Editor',
-          position: { referenceGroup: previewPanel.group.id },
-          inactive: true,
-        });
-        api.addPanel({
-          id: 'console',
-          component: 'console',
-          title: 'Console',
-          position: { referenceGroup: previewPanel.group.id },
-          inactive: true,
-        });
-      }
-      break;
-    }
-    case 'wide-editor': {
-      api.addPanel({ id: 'editor', component: 'editor', title: 'Editor', initialWidth: 800 });
-      api.addPanel({
-        id: 'preview',
-        component: 'preview',
-        title: 'Preview',
-        position: { referencePanel: 'editor', direction: 'right' },
-      });
-      const wep = api.getPanel('preview');
-      if (wep) {
-        api.addPanel({
-          id: 'customizer',
-          component: 'customizer',
-          title: 'Customizer',
-          position: { referenceGroup: wep.group.id },
-        });
-      }
-      api.addPanel({
-        id: 'ai-chat',
-        component: 'ai-chat',
-        title: 'AI',
-        position: { referencePanel: 'preview', direction: 'below' },
-      });
-      api.addPanel({
-        id: 'console',
-        component: 'console',
-        title: 'Console',
-        position: { referenceGroup: api.groups[api.groups.length - 1].id },
-      });
-      break;
-    }
-    case 'wide-preview': {
-      api.addPanel({ id: 'editor', component: 'editor', title: 'Editor', initialWidth: 400 });
-      api.addPanel({
-        id: 'preview',
-        component: 'preview',
-        title: 'Preview',
-        position: { referencePanel: 'editor', direction: 'right' },
-        initialWidth: 800,
-      });
-      const wpp = api.getPanel('preview');
-      if (wpp) {
-        api.addPanel({
-          id: 'customizer',
-          component: 'customizer',
-          title: 'Customizer',
-          position: { referenceGroup: wpp.group.id },
-        });
-      }
-      api.addPanel({
-        id: 'ai-chat',
-        component: 'ai-chat',
-        title: 'AI',
-        position: { referencePanel: 'editor', direction: 'below' },
-      });
-      api.addPanel({
-        id: 'console',
-        component: 'console',
-        title: 'Console',
-        position: { referenceGroup: api.groups[api.groups.length - 1].id },
-      });
-      break;
-    }
-    case 'minimal': {
-      api.addPanel({ id: 'editor', component: 'editor', title: 'Editor' });
-      api.addPanel({
-        id: 'preview',
-        component: 'preview',
-        title: 'Preview',
-        position: { referencePanel: 'editor', direction: 'right' },
-      });
-      const mp = api.getPanel('preview');
-      if (mp) {
-        api.addPanel({
-          id: 'customizer',
-          component: 'customizer',
-          title: 'Customizer',
-          position: { referenceGroup: mp.group.id },
-        });
-      }
-      break;
-    }
+  const sizes = getDefaultLayoutSizes(api);
+
+  api.addPanel(WORKSPACE_PANELS[0]);
+  const aiPanel = api.getPanel('ai-chat');
+  if (aiPanel) {
+    addPanelToGroup(api, WORKSPACE_PANELS[1], aiPanel.group.id);
   }
 
-  if (preset !== 'ai-first' && preset !== 'customizer-first') {
-    lockEditorGroup(api);
+  api.addPanel({
+    ...WORKSPACE_PANELS[2],
+    position: { referencePanel: 'ai-chat', direction: 'right' },
+    initialWidth: sizes.primary,
+  });
+  const previewPanel = api.getPanel('preview');
+  if (previewPanel) {
+    addPanelToGroup(api, WORKSPACE_PANELS[4], previewPanel.group.id);
   }
+
+  const filesPanel = api.addPanel({
+    ...WORKSPACE_PANELS[5],
+    position: { referencePanel: 'ai-chat', direction: 'left' },
+    initialWidth: sizes.files,
+  });
+  const customizerPanel = api.addPanel({
+    ...WORKSPACE_PANELS[3],
+    position: { referencePanel: 'files', direction: 'below' },
+    initialHeight: sizes.sidebar,
+  });
+
+  // Apply final sizes after the nested sidebar split exists: the left column is
+  // 20% wide with Files and Customizer at 50% height, while AI and Preview are 40% each.
+  filesPanel.api.setSize({ width: sizes.files });
+  customizerPanel.api.setSize({ height: sizes.sidebar });
+  previewPanel?.api.setSize({ width: sizes.primary });
+  aiPanel?.api.setActive();
 }
 
-export function applyDefaultLayout(api: DockviewApi): void {
-  addPresetPanels(api, 'default');
-}
-
-export function saveLayout(): void {
+export function saveLayout(mode: LayoutMode = getLayoutMode()): void {
   if (!dockviewApi) return;
   try {
-    const json = dockviewApi.toJSON();
-    localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(json));
-  } catch (e) {
-    console.error('Failed to save layout:', e);
+    localStorage.setItem(getLayoutStorageKey(mode), JSON.stringify(dockviewApi.toJSON()));
+  } catch (error) {
+    console.error('Failed to save layout:', error);
   }
 }
 
-export function loadLayout(): SerializedDockview | null {
-  const saved = localStorage.getItem(LAYOUT_STORAGE_KEY);
+export function loadLayout(mode: LayoutMode = getLayoutMode()): SerializedDockview | null {
+  const storageKey = getLayoutStorageKey(mode);
+  let saved = localStorage.getItem(storageKey);
+  loadedLegacyLayout = false;
+
+  if (!saved && mode === 'desktop') {
+    saved = localStorage.getItem(LEGACY_LAYOUT_STORAGE_KEY);
+    if (saved) {
+      loadedLegacyLayout = true;
+      localStorage.setItem(storageKey, saved);
+      localStorage.removeItem(LEGACY_LAYOUT_STORAGE_KEY);
+    }
+  }
+
   if (!saved) return null;
+
   try {
     return JSON.parse(saved) as SerializedDockview;
-  } catch (e) {
-    console.error('Failed to parse saved layout:', e);
+  } catch (error) {
+    console.error('Failed to parse saved layout:', error);
+    localStorage.removeItem(storageKey);
     return null;
   }
 }
 
-export function clearSavedLayout(): void {
-  localStorage.removeItem(LAYOUT_STORAGE_KEY);
-}
+export function restoreLayout(api: DockviewApi, mode: LayoutMode = getLayoutMode()): boolean {
+  const saved = loadLayout(mode);
+  if (!saved) return false;
 
-export function resetLayout(): void {
-  clearSavedLayout();
-  if (dockviewApi) {
-    dockviewApi.clear();
-    applyDefaultLayout(dockviewApi);
-    saveLayout();
+  try {
+    api.fromJSON(saved);
+    if (
+      loadedLegacyLayout &&
+      !api.panels.some((panel) => panel.api.component === 'files')
+    ) {
+      const files = WORKSPACE_PANELS.find((panel) => panel.id === 'files');
+      const referencePanel = api.panels[0];
+      if (files && referencePanel) {
+        const sizes = getDefaultLayoutSizes(api);
+        api.addPanel({
+          ...files,
+          position: { referencePanel: referencePanel.id, direction: 'left' },
+          initialWidth: sizes.files,
+        });
+      } else if (files) {
+        api.addPanel(files);
+      }
+      localStorage.setItem(getLayoutStorageKey(mode), JSON.stringify(api.toJSON()));
+    }
+    return true;
+  } catch (error) {
+    console.error('Failed to restore saved layout:', error);
+    api.clear();
+    clearSavedLayout(mode);
+    return false;
   }
 }
 
-export function applyWorkspacePreset(preset: WorkspacePreset): void {
-  if (!dockviewApi) return;
-  dockviewApi.clear();
-  addPresetPanels(dockviewApi, preset);
-  saveLayout();
+export function clearSavedLayout(mode: LayoutMode = getLayoutMode()): void {
+  localStorage.removeItem(getLayoutStorageKey(mode));
+  if (mode === 'desktop') {
+    localStorage.removeItem(LEGACY_LAYOUT_STORAGE_KEY);
+  }
 }
 
-export function openPanel(panelId: string, component: string, title: string): void {
+export function resetLayout(mode: LayoutMode = getLayoutMode()): void {
+  clearSavedLayout(mode);
   if (!dockviewApi) return;
 
-  const existing = dockviewApi.getPanel(panelId);
+  dockviewApi.clear();
+  addDefaultPanels(dockviewApi, mode);
+  saveLayout(mode);
+}
+
+export function openPanel(panelId: WorkspacePanelId): void {
+  if (!dockviewApi) return;
+
+  const definition = WORKSPACE_PANELS.find((panel) => panel.id === panelId);
+  if (!definition) return;
+
+  const existing = dockviewApi.panels.find(
+    (panel) => panel.id === panelId || panel.api.component === definition.component
+  );
   if (existing) {
     existing.api.setActive();
     return;
   }
 
-  const groups = dockviewApi.groups;
-  if (groups.length > 0) {
+  const targetGroup =
+    dockviewApi.activeGroup ?? dockviewApi.groups[dockviewApi.groups.length - 1];
+  if (targetGroup) {
     dockviewApi.addPanel({
-      id: panelId,
-      component,
-      title,
-      position: { referenceGroup: groups[groups.length - 1].id },
+      ...definition,
+      position: { referenceGroup: targetGroup.id },
     });
   } else {
-    dockviewApi.addPanel({ id: panelId, component, title });
+    dockviewApi.addPanel(definition);
   }
 }

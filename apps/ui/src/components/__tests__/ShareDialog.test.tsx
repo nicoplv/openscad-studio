@@ -61,7 +61,7 @@ describe('ShareDialog', () => {
     });
   });
 
-  it('creates a share link and lets the user switch the default mode', async () => {
+  it('creates a mode-free share link', async () => {
     mockCreateShare.mockResolvedValue({
       id: 'abc12345',
       url: 'http://localhost:3000/s/abc12345',
@@ -92,15 +92,7 @@ describe('ShareDialog', () => {
       );
     });
 
-    fireEvent.click(screen.getByTestId('share-mode-default'));
-    expect((screen.getByTestId('share-link-input') as HTMLInputElement).value).toBe(
-      'http://localhost:3000/s/abc12345?mode=default'
-    );
-
-    fireEvent.click(screen.getByTestId('share-mode-ai-first'));
-    expect((screen.getByTestId('share-link-input') as HTMLInputElement).value).toBe(
-      'http://localhost:3000/s/abc12345?mode=ai-first'
-    );
+    expect(screen.queryByText('Default View')).toBeNull();
 
     await waitFor(() => {
       expect(mockUploadThumbnail).toHaveBeenCalledWith(

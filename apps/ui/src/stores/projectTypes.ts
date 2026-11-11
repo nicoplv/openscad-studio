@@ -52,7 +52,7 @@ export interface ProjectStoreActions {
   openProject: (
     root: string | null,
     files: Record<string, string>,
-    renderTargetPath: string
+    renderTargetPath: string | null
   ) => void;
 
   /** Add a new file to the project. No-op if the path already exists. */

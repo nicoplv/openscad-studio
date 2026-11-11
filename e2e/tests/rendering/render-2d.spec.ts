@@ -138,12 +138,12 @@ test.describe('2D Rendering', () => {
   }) => {
     await app.waitForRender();
 
-    // Collapse the file tree to give the 2D viewport maximum width — the
+    // Close Files to give the 2D viewport maximum width — the
     // floating Measure tool panel (280px, bottom-right) can otherwise overlap
     // with the coordinate-based click positions used below.
-    const hideBtn = app.page.locator('button[title="Hide file tree"]');
-    if (await hideBtn.isVisible({ timeout: 1_000 }).catch(() => false)) {
-      await hideBtn.click();
+    const closeFiles = app.page.getByRole('button', { name: 'Close Files' });
+    if (await closeFiles.isVisible({ timeout: 1_000 }).catch(() => false)) {
+      await closeFiles.click();
       await app.page.waitForTimeout(300);
     }
 

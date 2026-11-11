@@ -11,7 +11,7 @@ import {
 
 const mockGetPlatform = jest.fn();
 const mockTrack = jest.fn();
-const mockApplyWorkspacePreset = jest.fn();
+const mockResetLayout = jest.fn();
 const mockGetDesktopMcpStatus = jest.fn();
 const mockSyncDesktopMcpConfig = jest.fn();
 let platformMock: {
@@ -48,7 +48,7 @@ jest.unstable_mockModule('@/analytics/runtime', () => ({
 }));
 
 jest.unstable_mockModule('@/stores/layoutStore', () => ({
-  applyWorkspacePreset: (...args: unknown[]) => mockApplyWorkspacePreset(...args),
+  resetLayout: (...args: unknown[]) => mockResetLayout(...args),
 }));
 
 jest.unstable_mockModule('@/services/desktopMcp', () => ({
@@ -211,15 +211,16 @@ describe('SettingsDialog privacy copy', () => {
     expect(twoDAxesToggle).toHaveAttribute('data-state', 'unchecked');
   });
 
-  it('offers Customizer First as a default layout option', async () => {
+  it('offers automatic layout persistence and a reset action', async () => {
     render(
       <ThemeProvider>
         <SettingsDialog isOpen onClose={() => {}} initialTab="appearance" />
       </ThemeProvider>
     );
 
-    expect(await screen.findByText('Default Layout')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Customizer First' })).toBeTruthy();
+    expect(await screen.findByText(/panel arrangement is saved automatically/i)).toBeTruthy();
+    expect(screen.queryByText('Default Layout')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Reset layout' })).toBeTruthy();
   });
 
   it('shows external agent MCP onboarding in the AI settings tab', async () => {
@@ -336,34 +337,25 @@ describe('SettingsDialog privacy copy', () => {
     ).toBeTruthy();
   });
 
-  it('tracks layout selection sources and viewer preference changes', async () => {
+  it('tracks layout resets and viewer preference changes', async () => {
     const { unmount } = render(
       <ThemeProvider>
         <SettingsDialog isOpen onClose={() => {}} initialTab="appearance" />
       </ThemeProvider>
     );
 
-    await screen.findByText('Default Layout');
-    fireEvent.click(screen.getByRole('button', { name: 'Customizer First' }));
+    await screen.findByText(/panel arrangement is saved automatically/i);
     fireEvent.click(screen.getByRole('button', { name: 'Reset layout' }));
 
     expect(mockTrack).toHaveBeenCalledWith(
       'workspace layout selected',
       expect.objectContaining({
-        layout: 'customizer-first',
-        source: 'settings',
-        is_first_run: false,
-      })
-    );
-    expect(mockTrack).toHaveBeenCalledWith(
-      'workspace layout selected',
-      expect.objectContaining({
-        layout: 'customizer-first',
+        layout: 'ai-first',
         source: 'layout_reset',
         is_first_run: false,
       })
     );
-    expect(mockApplyWorkspacePreset).toHaveBeenCalledWith('customizer-first');
+    expect(mockResetLayout).toHaveBeenCalledWith();
     unmount();
 
     render(

@@ -19,15 +19,23 @@ function getMenuBarDef(): MenuDef[] {
     {
       label: 'File',
       items: [
-        { type: 'action', id: 'file.new', label: 'New File', shortcut: `${mod}+N` },
+        { type: 'action', id: 'file.new', label: 'New Project', shortcut: `${mod}+N` },
+        { type: 'action', id: 'file.newFile', label: 'New File' },
+        {
+          type: 'action',
+          id: 'file.openProject',
+          label: 'Open Project...',
+          shortcut: `${mod}+⇧+O`,
+        },
         { type: 'action', id: 'file.open', label: 'Open File...', shortcut: `${mod}+O` },
-        { type: 'action', id: 'file.openProject', label: 'Open Folder...' },
+        { type: 'action', id: 'file.importFolder', label: 'Import Folder...' },
         { type: 'separator' },
-        { type: 'action', id: 'file.save', label: 'Save', shortcut: `${mod}+S` },
-        { type: 'action', id: 'file.saveAs', label: 'Save As...', shortcut: `${mod}+\u21E7+S` },
-        { type: 'action', id: 'file.saveAll', label: 'Save All', shortcut: `${mod}+\u2325+S` },
+        { type: 'action', id: 'file.save', label: 'Save Project', shortcut: `${mod}+S` },
+        { type: 'action', id: 'file.saveAs', label: 'Save Project As...', shortcut: `${mod}+⇧+S` },
         { type: 'separator' },
-        { type: 'action', id: 'file.export', label: 'Export...' },
+        { type: 'action', id: 'file.exportSource', label: 'Export File...' },
+        { type: 'action', id: 'file.exportAll', label: 'Export All...' },
+        { type: 'action', id: 'file.export', label: 'Export Model...' },
         { type: 'separator' },
         { type: 'action', id: 'file.settings', label: 'Settings', shortcut: `${mod}+,` },
       ],
@@ -39,6 +47,19 @@ function getMenuBarDef(): MenuDef[] {
         { type: 'action', id: 'edit.redo', label: 'Redo', shortcut: `${mod}+\u21E7+Z` },
         { type: 'separator' },
         { type: 'action', id: 'edit.render', label: 'Render', shortcut: `${mod}+\u23CE` },
+      ],
+    },
+    {
+      label: 'Window',
+      items: [
+        { type: 'action', id: 'window.ai', label: 'AI' },
+        { type: 'action', id: 'window.editor', label: 'Editor' },
+        { type: 'action', id: 'window.preview', label: 'Preview' },
+        { type: 'action', id: 'window.customizer', label: 'Customizer' },
+        { type: 'action', id: 'window.console', label: 'Console' },
+        { type: 'action', id: 'window.files', label: 'Files' },
+        { type: 'separator' },
+        { type: 'action', id: 'window.resetWorkspace', label: 'Reset workspace' },
       ],
     },
   ];
@@ -90,37 +111,13 @@ interface WebMenuBarProps {
   onSettings: () => void;
   onUndo: () => void;
   onRedo: () => void;
-  hasMultipleFiles?: boolean;
 }
 
-export function WebMenuBar({
-  onExport,
-  onShare,
-  onSettings,
-  onUndo,
-  onRedo,
-  hasMultipleFiles,
-}: WebMenuBarProps) {
+export function WebMenuBar({ onExport, onShare, onSettings, onUndo, onRedo }: WebMenuBarProps) {
   const [openMenu, setOpenMenu] = useState<number | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const menuDef = useMemo(() => {
     const nextMenuDef = getMenuBarDef();
-    // Insert "Save Project (.zip)..." after "Save All" when there are multiple files
-    if (hasMultipleFiles) {
-      const fileMenu = nextMenuDef[0]?.items;
-      if (fileMenu) {
-        const saveAllIdx = fileMenu.findIndex(
-          (item) => item.type === 'action' && item.id === 'file.saveAll'
-        );
-        if (saveAllIdx >= 0) {
-          fileMenu.splice(saveAllIdx + 1, 0, {
-            type: 'action',
-            id: 'file.saveProject',
-            label: 'Save Project (.zip)...',
-          });
-        }
-      }
-    }
     if (onShare) {
       const exportIdx = nextMenuDef[0]?.items.findIndex(
         (item) => item.type === 'action' && item.id === 'file.export'
@@ -134,7 +131,7 @@ export function WebMenuBar({
       }
     }
     return nextMenuDef;
-  }, [onShare, hasMultipleFiles]);
+  }, [onShare]);
 
   const handleClose = useCallback(() => {
     setOpenMenu(null);
@@ -146,6 +143,9 @@ export function WebMenuBar({
         case 'file.new':
           eventBus.emit('menu:file:new');
           break;
+        case 'file.newFile':
+          eventBus.emit('menu:file:new_file');
+          break;
         case 'file.open':
           eventBus.emit('menu:file:open');
           break;
@@ -155,14 +155,17 @@ export function WebMenuBar({
         case 'file.saveAs':
           eventBus.emit('menu:file:save_as');
           break;
-        case 'file.saveAll':
-          eventBus.emit('menu:file:save_all');
+        case 'file.exportSource':
+          eventBus.emit('menu:file:export_source');
+          break;
+        case 'file.exportAll':
+          eventBus.emit('menu:file:export_all');
           break;
         case 'file.export':
           onExport();
           break;
-        case 'file.saveProject':
-          eventBus.emit('menu:file:save_project');
+        case 'file.importFolder':
+          eventBus.emit('menu:file:open_folder');
           break;
         case 'file.openProject':
           eventBus.emit('menu:file:open_project');
@@ -181,6 +184,27 @@ export function WebMenuBar({
           break;
         case 'edit.render':
           eventBus.emit('render-requested', {});
+          break;
+        case 'window.ai':
+          eventBus.emit('menu:window:open_panel', 'ai-chat');
+          break;
+        case 'window.editor':
+          eventBus.emit('menu:window:open_panel', 'editor');
+          break;
+        case 'window.preview':
+          eventBus.emit('menu:window:open_panel', 'preview');
+          break;
+        case 'window.customizer':
+          eventBus.emit('menu:window:open_panel', 'customizer');
+          break;
+        case 'window.console':
+          eventBus.emit('menu:window:open_panel', 'console');
+          break;
+        case 'window.files':
+          eventBus.emit('menu:window:open_panel', 'files');
+          break;
+        case 'window.resetWorkspace':
+          eventBus.emit('menu:window:reset_workspace');
           break;
       }
     },

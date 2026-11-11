@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
 import { ChatImage, ChatImageGrid } from './ChatImage';
 import { CommentCard } from './viewer-comment/CommentCard';
-import { Button } from './ui';
+import { Button, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from './ui';
 import { MarkdownMessage } from './MarkdownMessage';
 import { ModelSelector } from './ModelSelector';
 import { AiContextReadout } from './AiContextReadout';
@@ -352,6 +352,10 @@ export interface AiPromptPanelProps {
   onCancel: () => void;
   messages?: Message[];
   onNewConversation?: () => void;
+  conversations?: { id: string; title: string }[];
+  activeConversationId?: string | null;
+  onSelectConversation?: (id: string) => void;
+  interrupted?: boolean;
   currentToolCalls?: ToolCall[];
   currentProvider?: AiProvider;
   currentModel?: string;
@@ -362,7 +366,7 @@ export interface AiPromptPanelProps {
     sourceSurface?: ModelSelectionSurface,
     provider?: AiProvider
   ) => void;
-  onRestoreCheckpoint?: (checkpointId: string, truncatedMessages: Message[]) => void;
+  onRestoreCheckpoint?: (checkpointId: string, truncatedMessages: Message[]) => boolean;
   onOpenSettings?: () => void;
 }
 
@@ -390,6 +394,10 @@ export const AiPromptPanel = forwardRef<AiPromptPanelRef, AiPromptPanelProps>(
       onCancel,
       messages = [],
       onNewConversation,
+      conversations = [],
+      activeConversationId,
+      onSelectConversation,
+      interrupted,
       currentToolCalls = [],
       currentProvider,
       currentModel = 'claude-sonnet-4-5',
@@ -407,6 +415,13 @@ export const AiPromptPanel = forwardRef<AiPromptPanelRef, AiPromptPanelProps>(
     const composerRef = useRef<AiComposerRef>(null);
     const emptyStateHostRef = useRef<HTMLDivElement>(null);
     const autoScrollPinnedRef = useRef(true);
+    const hasConversation = Boolean(
+      messages.length ||
+      conversations.length > 1 ||
+      draft.text ||
+      draft.attachmentIds.length ||
+      draft.comments?.length
+    );
     const [emptyStatePanelLayout, setEmptyStatePanelLayout] = useState<'stacked' | 'split'>(
       'stacked'
     );
@@ -426,6 +441,13 @@ export const AiPromptPanel = forwardRef<AiPromptPanelRef, AiPromptPanelProps>(
       autoScrollPinnedRef.current = true;
       setShowJumpToLatest(false);
     };
+
+    useEffect(() => {
+      autoScrollPinnedRef.current = true;
+      const node = responseRef.current;
+      if (node) node.scrollTop = node.scrollHeight;
+      setShowJumpToLatest(false);
+    }, [activeConversationId]);
 
     const handleTranscriptScroll = () => {
       if (!responseRef.current) return;
@@ -520,15 +542,11 @@ export const AiPromptPanel = forwardRef<AiPromptPanelRef, AiPromptPanelProps>(
           if (!shouldProceed) return;
         }
 
-        const checkpoint = await restoreToCheckpoint(checkpointId);
-        if (!checkpoint) {
-          throw new Error('Checkpoint could not be restored.');
-        }
-
-        if (messageIndex !== -1 && onRestoreCheckpoint) {
-          const truncatedMessages = messages.slice(0, messageIndex);
-          onRestoreCheckpoint(checkpointId, truncatedMessages);
-        }
+        const restored =
+          messageIndex !== -1 && onRestoreCheckpoint
+            ? onRestoreCheckpoint(checkpointId, messages.slice(0, messageIndex))
+            : await restoreToCheckpoint(checkpointId);
+        if (!restored) throw new Error('Checkpoint could not be restored.');
 
         notifySuccess('Restored checkpoint', {
           toastId: 'restore-checkpoint-success',
@@ -544,7 +562,7 @@ export const AiPromptPanel = forwardRef<AiPromptPanelRef, AiPromptPanelProps>(
       }
     };
 
-    if (!hasApiKey) {
+    if (!hasApiKey && !hasConversation) {
       const isDesktop = getPlatform().capabilities.hasFileSystem;
       return (
         <div
@@ -583,17 +601,37 @@ export const AiPromptPanel = forwardRef<AiPromptPanelRef, AiPromptPanelProps>(
         style={{ backgroundColor: 'var(--bg-primary)' }}
       >
         {onNewConversation && (
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={onNewConversation}
-            title="Start new conversation"
-            data-testid="ai-new-conversation-button"
-            disabled={isStreaming}
-            className="absolute top-3 right-3 z-10 shadow-sm"
-          >
-            + New
-          </Button>
+          <div className="flex shrink-0 items-center justify-end gap-2 border-b border-[var(--border-subtle)] px-2 py-1.5">
+            {onSelectConversation && (
+              <Select
+                value={activeConversationId ?? undefined}
+                onValueChange={onSelectConversation}
+                disabled={isStreaming || isProcessingAttachments}
+              >
+                <SelectTrigger aria-label="AI conversation" className="min-w-0 flex-1">
+                  <SelectValue placeholder="New conversation" />
+                </SelectTrigger>
+                <SelectContent>
+                  {conversations.map(({ id, title }) => (
+                    <SelectItem key={id} value={id}>
+                      {title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={onNewConversation}
+              title="Start new conversation"
+              data-testid="ai-new-conversation-button"
+              disabled={isStreaming || isProcessingAttachments}
+              className="shrink-0"
+            >
+              + New session
+            </Button>
+          </div>
         )}
 
         {messages.length === 0 && !streamingResponse ? (
@@ -622,7 +660,6 @@ export const AiPromptPanel = forwardRef<AiPromptPanelRef, AiPromptPanelProps>(
             style={{
               backgroundColor: 'var(--bg-secondary)',
               borderBottom: '1px solid var(--border-primary)',
-              paddingTop: onNewConversation ? '3rem' : undefined,
             }}
           >
             {messages.map((message) => {
@@ -683,6 +720,7 @@ export const AiPromptPanel = forwardRef<AiPromptPanelRef, AiPromptPanelProps>(
                           variant="secondary"
                           onClick={() => handleRestoreCheckpoint(message.checkpointId!, message.id)}
                           title="Restore code to before this turn"
+                          disabled={isStreaming}
                         >
                           ↶ Restore to before this turn
                         </Button>
@@ -828,46 +866,59 @@ export const AiPromptPanel = forwardRef<AiPromptPanelRef, AiPromptPanelProps>(
           </div>
         )}
 
-        <div className="p-2">
-          <AiComposer
-            ref={composerRef}
-            draft={draft}
-            attachments={attachments}
-            disabled={isStreaming}
-            isProcessingAttachments={isProcessingAttachments}
-            canSubmit={canSubmitDraft}
-            blockedMessage={draftVisionBlockMessage}
-            warningMessage={draftVisionWarningMessage}
-            errors={draftErrors}
-            placeholder="Describe the changes you want to make..."
-            rows={1}
-            maxRows={4}
-            variant="panel"
-            submitLabel="Send"
-            submitTitle="Send (Enter). Shift+Enter adds a newline."
-            trailingControls={
-              <>
-                <ModelSelector
-                  currentModel={currentModel}
-                  currentProvider={currentProvider}
-                  availableProviders={availableProviders}
-                  onChange={(model, provider) => onModelChange?.(model, 'ai_panel', provider)}
-                  disabled={isStreaming}
-                  compact
-                />
-                {currentProvider === 'openai-compatible' && (
-                  <AiContextReadout modelId={currentModel} usage={lastContextUsage} />
-                )}
-              </>
-            }
-            onTextChange={onTextChange}
-            onFilesSelected={onFilesSelected}
-            onRemoveAttachment={onRemoveAttachment}
-            onRemoveComment={onRemoveComment}
-            onSubmit={onSubmit}
-            onCancel={onCancel}
-          />
-        </div>
+        {interrupted && (
+          <div role="status" className="px-3 py-1 text-xs text-[var(--text-secondary)]">
+            The previous response was interrupted.
+          </div>
+        )}
+        {!hasApiKey ? (
+          <div className="p-2">
+            <Button variant="secondary" size="sm" onClick={onOpenSettings}>
+              Configure AI to continue
+            </Button>
+          </div>
+        ) : (
+          <div className="p-2">
+            <AiComposer
+              ref={composerRef}
+              draft={draft}
+              attachments={attachments}
+              disabled={isStreaming}
+              isProcessingAttachments={isProcessingAttachments}
+              canSubmit={canSubmitDraft}
+              blockedMessage={draftVisionBlockMessage}
+              warningMessage={draftVisionWarningMessage}
+              errors={draftErrors}
+              placeholder="Describe the changes you want to make..."
+              rows={1}
+              maxRows={4}
+              variant="panel"
+              submitLabel="Send"
+              submitTitle="Send (Enter). Shift+Enter adds a newline."
+              trailingControls={
+                <>
+                  <ModelSelector
+                    currentModel={currentModel}
+                    currentProvider={currentProvider}
+                    availableProviders={availableProviders}
+                    onChange={(model, provider) => onModelChange?.(model, 'ai_panel', provider)}
+                    disabled={isStreaming}
+                    compact
+                  />
+                  {currentProvider === 'openai-compatible' && (
+                    <AiContextReadout modelId={currentModel} usage={lastContextUsage} />
+                  )}
+                </>
+              }
+              onTextChange={onTextChange}
+              onFilesSelected={onFilesSelected}
+              onRemoveAttachment={onRemoveAttachment}
+              onRemoveComment={onRemoveComment}
+              onSubmit={onSubmit}
+              onCancel={onCancel}
+            />
+          </div>
+        )}
       </div>
     );
   }

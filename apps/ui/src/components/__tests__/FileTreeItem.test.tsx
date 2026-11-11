@@ -8,10 +8,11 @@ import { renderWithProviders } from './test-utils';
 const defaultProps = {
   name: 'main.scad',
   fullPath: 'main.scad',
-  isActive: true,
+  isSelected: true,
   isDirty: false,
   isRenderTarget: false,
   onClick: jest.fn(),
+  onDoubleClick: jest.fn(),
   onRename: jest.fn(),
   onDelete: jest.fn(),
   onSetRenderTarget: jest.fn(),
@@ -25,6 +26,30 @@ describe('FileTreeItem', () => {
   it('renders the file name', () => {
     renderWithProviders(<FileTreeItem {...defaultProps} />);
     expect(screen.getByText('main.scad')).toBeTruthy();
+  });
+
+  it('highlights the selected render target', () => {
+    renderWithProviders(<FileTreeItem {...defaultProps} />);
+
+    const button = screen.getByRole('button', { name: 'main.scad' });
+    expect(button.getAttribute('aria-current')).toBe('true');
+  });
+
+  it('selects the render target on single click', () => {
+    renderWithProviders(<FileTreeItem {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'main.scad' }));
+
+    expect(defaultProps.onClick).toHaveBeenCalledTimes(1);
+    expect(defaultProps.onDoubleClick).not.toHaveBeenCalled();
+  });
+
+  it('opens the file on double click', () => {
+    renderWithProviders(<FileTreeItem {...defaultProps} />);
+
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'main.scad' }));
+
+    expect(defaultProps.onDoubleClick).toHaveBeenCalledTimes(1);
   });
 
   it('enters rename mode on Enter key and allows multi-character typing', () => {
@@ -109,10 +134,11 @@ describe('FileTreeItem drag behavior', () => {
   const dragProps = {
     name: 'main.scad',
     fullPath: 'main.scad',
-    isActive: false,
+    isSelected: false,
     isDirty: false,
     isRenderTarget: false,
     onClick: jest.fn(),
+    onDoubleClick: jest.fn(),
     onRename: jest.fn(),
     onDelete: jest.fn(),
     onSetRenderTarget: jest.fn(),
